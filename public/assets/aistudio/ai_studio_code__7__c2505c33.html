@@ -1,0 +1,1650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GTA Kashmir: Boulevard Road — Electric Auto</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{--saffron:#e8a33d;--chinar:#b8432f;--lake:#2e8f8a;--ink:#1b2a34;--snow:#fff7ec;--eauto:#3ac2de}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;overflow:hidden;background:#cce2f0;font-family:Rajdhani,system-ui,sans-serif;color:var(--snow);touch-action:none;user-select:none}
+canvas#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+.hud{position:fixed;pointer-events:none;text-shadow:0 2px 6px rgba(0,0,0,.65);font-weight:700}
+#cash{top:calc(14px + env(safe-area-inset-top,0px));left:16px;font-size:28px;color:var(--saffron)}
+#mission{top:calc(14px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);text-align:center;font-size:20px;background:rgba(20,34,44,.75);border:1px solid rgba(255,255,255,.2);padding:8px 18px;border-radius:10px;max-width:60vw}
+#mission small{display:block;font-weight:500;opacity:.9;font-size:16px;color:#ffd6a3}
+#speed{right:16px;bottom:calc(14px + env(safe-area-inset-bottom,0px));font-size:44px;line-height:1;color:var(--eauto)}
+#speed small{font-size:16px;font-weight:500;color:var(--snow)}
+#map{position:fixed;left:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));border:2px solid rgba(255,247,236,.7);border-radius:10px;background:rgba(20,34,44,.65)}
+#mute{position:fixed;top:calc(14px + env(safe-area-inset-top,0px));right:14px;background:rgba(20,34,44,.85);color:var(--snow);border:1px solid rgba(255,255,255,.3);border-radius:8px;padding:8px 14px;font:700 16px Rajdhani,sans-serif;cursor:pointer;display:flex;align-items:center;gap:6px}
+#mute:hover{background:rgba(29,110,199,.9)}
+
+/* GTA Radio Banner */
+#radio-toast{
+  position:fixed;
+  top:calc(70px + env(safe-area-inset-top,0px));
+  left:50%;
+  transform:translateX(-50%) translateY(-20px);
+  background:linear-gradient(90deg,rgba(15,32,56,.95),rgba(29,110,199,.95));
+  border:2px solid #3ac2de;
+  border-radius:8px;
+  padding:8px 24px;
+  font-weight:700;
+  font-size:17px;
+  color:#fff;
+  letter-spacing:1px;
+  box-shadow:0 8px 24px rgba(0,0,0,.6);
+  opacity:0;
+  pointer-events:none;
+  transition:all .35s cubic-bezier(.18,.89,.32,1.28);
+  z-index:90;
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+#radio-toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+
+#title{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px;background:linear-gradient(#15242ecc,#1d6eccb8);z-index:100}
+#title h1{font-size:clamp(44px,9vw,92px);line-height:.95;letter-spacing:1px}
+#title p{max-width:540px;font-size:20px;font-weight:500}
+#title button{margin-top:8px;background:var(--saffron);color:var(--ink);border:0;border-radius:10px;padding:14px 38px;font:700 24px Rajdhani,sans-serif;cursor:pointer}
+#title button:focus-visible,#mute:focus-visible{outline:3px solid #fff}
+#pad{position:fixed;inset:auto 0 calc(24px + env(safe-area-inset-bottom,0px)) 0;display:none;justify-content:space-between;padding:0 20px;pointer-events:none}
+#pad div{display:flex;gap:12px;pointer-events:auto}
+#pad button{width:66px;height:66px;border-radius:50%;border:0;background:rgba(255,247,236,.38);font-size:26px;color:var(--ink)}
+#pad button:active{background:rgba(58,194,222,.85)}
+
+/* --- MOVABLE REAL KASHMIR SCENERY PICTURE WINDOW --- */
+#scenery-widget {
+  position: fixed;
+  left: 16px;
+  top: calc(70px + env(safe-area-inset-top, 0px));
+  width: 250px;
+  background: rgba(18, 30, 40, 0.88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 2px solid rgba(58, 194, 222, 0.85);
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.5);
+  overflow: hidden;
+  z-index: 20;
+  touch-action: none;
+  cursor: grab;
+}
+#scenery-widget:active { cursor: grabbing; }
+#scenery-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: linear-gradient(90deg, #1d6ec7, #3ac2de);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+}
+#scenery-bar span { display: flex; align-items: center; gap: 4px; pointer-events: none; }
+.scenery-btn {
+  background: rgba(0, 0, 0, 0.35);
+  border: 0;
+  color: #fff;
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.scenery-btn:hover { background: rgba(0, 0, 0, 0.6); }
+#scenery-frame {
+  position: relative;
+  width: 100%;
+  height: 145px;
+  overflow: hidden;
+  background: #0d1a22;
+}
+#scenery-img {
+  position: absolute;
+  top: 0;
+  left: -20%;
+  width: 140%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  transition: transform 0.08s ease-out;
+}
+#scenery-tag {
+  position: absolute;
+  bottom: 6px;
+  left: 8px;
+  right: 8px;
+  background: rgba(14, 24, 32, 0.85);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+@media (max-width:700px){
+  #scenery-widget { width: 190px; }
+  #scenery-frame { height: 110px; }
+  #map{bottom:calc(110px + env(safe-area-inset-bottom,0px))}
+  #speed{bottom:calc(110px + env(safe-area-inset-bottom,0px))}
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud" id="cash">₹0</div>
+<div class="hud" id="mission"></div>
+<div class="hud" id="speed">0 <small>km/h</small></div>
+<canvas id="map" width="160" height="128"></canvas>
+<button id="mute" aria-label="Toggle sound">📻 GTA Radio: ON</button>
+<div id="radio-toast">📻 RADIO LOS SANTOS — Theme Song</div>
+
+<!-- MOVABLE REAL KASHMIR SCENERY WINDOW -->
+<div id="scenery-widget">
+  <div id="scenery-bar">
+    <span>✥ Real Dal Lake Vista</span>
+    <div style="display:flex;gap:4px">
+      <button class="scenery-btn" id="scenery-prev" title="Previous Scenery">◀</button>
+      <button class="scenery-btn" id="scenery-next" title="Next Scenery">▶</button>
+      <button class="scenery-btn" id="scenery-toggle" title="Minimize / Expand">−</button>
+    </div>
+  </div>
+  <div id="scenery-frame">
+    <img id="scenery-img" alt="Real Kashmir Scenery" crossorigin="anonymous">
+    <div id="scenery-tag">📍 Dal Lake & Zabarwan Range</div>
+  </div>
+</div>
+
+<div id="pad"><div><button data-k="ArrowLeft">◀</button><button data-k="ArrowRight">▶</button></div><div><button data-k="ArrowDown">▼</button><button data-k="ArrowUp">▲</button></div></div>
+<div id="title">
+  <h1>GTA Kashmir<br>Electric Auto</h1>
+  <p>Dal Lake on your left, hotels and cafés on your right. Pilot your custom light-blue electric battery auto across Boulevard Road, pick up tourists, and earn rupees.</p>
+  <p>Arrow keys or WASD to drive. Space to brake. M to mute GTA Theme Radio.</p>
+  <button id="start">Start driving</button>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+var T=THREE,R=Math.random,PI=Math.PI,ZL=440;
+var cv=document.getElementById('c');
+var renderer=new T.WebGLRenderer({canvas:cv,antialias:window.devicePixelRatio<2});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+
+// Clean Himalayan blue-to-haze palette
+var scene=new T.Scene(),SKY=0xbfddf2;
+scene.background=new T.Color(SKY);
+scene.fog=new T.Fog(0xd4e7f5,180,980);
+
+var cam=new T.PerspectiveCamera(62,1,0.5,1200);
+scene.add(new T.HemisphereLight(0xe8f4fc,0x3e5235,0.92));
+var sun=new T.DirectionalLight(0xfff7ea,0.95);
+sun.position.set(280,180,-240);
+scene.add(sun);
+
+// Sun disc in sky
+var disc=new T.Mesh(new T.SphereGeometry(32,16,12),new T.MeshBasicMaterial({color:0xfffae8,fog:false}));
+disc.position.set(580,240,-750);
+scene.add(disc);
+
+function mat(c){return new T.MeshLambertMaterial({color:c,flatShading:true})}
+function flat(w,l,x,y,c){var m=new T.Mesh(new T.PlaneGeometry(w,l).rotateX(-PI/2),mat(c));m.position.set(x,y,0);scene.add(m);return m}
+
+// Ground, parking strip, road, promenade (lake is +X, promenade at x=12)
+flat(2400,2400,0,0,0x587842);
+flat(19,1000,-16.5,0.03,0x7d8182);
+flat(14,1000,0,0.04,0x393c40);
+flat(10,1000,12,0.05,0xb8aa8d);
+var rail=new T.Mesh(new T.BoxGeometry(0.3,1,1000),mat(0xe8e4d8));rail.position.set(17.4,0.5,0);scene.add(rail);
+
+// Dal Lake water
+var waterMat=new T.MeshLambertMaterial({color:0x206d6b});
+var water=new T.Mesh(new T.PlaneGeometry(580,1500).rotateX(-PI/2),waterMat);water.position.set(308,0.08,0);scene.add(water);
+
+// Center line
+(function(){
+  var N=90,m=new T.InstancedMesh(new T.BoxGeometry(0.35,0.05,4),new T.MeshBasicMaterial({color:0xfff6db}),N),d=new T.Object3D();
+  for(var i=0;i<N;i++){d.position.set(0,0.1,-445+i*10);d.updateMatrix();m.setMatrixAt(i,d.matrix);}scene.add(m);
+})();
+
+// Lamp posts on promenade
+(function(){
+  var N=36,poles=new T.InstancedMesh(new T.CylinderGeometry(0.12,0.15,5,6),mat(0x222629),N),
+      bulbs=new T.InstancedMesh(new T.SphereGeometry(0.4,8,6),new T.MeshBasicMaterial({color:0xffecb3}),N),d=new T.Object3D();
+  for(var i=0;i<N;i++){var z=-430+i*25;d.position.set(16.2,2.5,z);d.updateMatrix();poles.setMatrixAt(i,d.matrix);d.position.y=5.1;d.updateMatrix();bulbs.setMatrixAt(i,d.matrix);}
+  scene.add(poles,bulbs);
+})();
+
+/* =========================================================================
+   ZABARWAN RANGE GEOMETRY & LANDMARKS
+   ========================================================================= */
+(function buildZabarwanHills(){
+  var mRock=mat(0x566473), mSnow=mat(0xf8fcff), mPine=mat(0x254231), mFoothill=mat(0x3e573e);
+
+  var zabarwanSpine=[
+    {z:-720, x:620, h:180, w:170},
+    {z:-580, x:600, h:210, w:180},
+    {z:-440, x:580, h:230, w:190},
+    {z:-300, x:590, h:240, w:185},
+    {z:-140, x:650, h:310, w:210, mahadev:true},
+    {z:  20, x:610, h:250, w:195},
+    {z: 160, x:590, h:230, w:185},
+    {z: 300, x:610, h:215, w:180},
+    {z: 460, x:620, h:190, w:175},
+    {z: 620, x:650, h:170, w:170}
+  ];
+
+  var peakGeo=new T.ConeGeometry(1,1,6);
+
+  zabarwanSpine.forEach(function(p){
+    var m=new T.Mesh(peakGeo,mRock);
+    m.scale.set(p.w,p.h,p.w*0.85);
+    m.position.set(p.x,p.h/2-4,p.z);
+    m.rotation.y=(p.z*0.01);
+    scene.add(m);
+
+    var snowScale=p.mahadev?0.42:0.25;
+    var snowY=p.mahadev?0.79:0.87;
+    var snow=new T.Mesh(peakGeo,mSnow);
+    snow.scale.set(p.w*snowScale,p.h*snowScale,p.w*snowScale*0.85);
+    snow.position.set(p.x,p.h*snowY-4,p.z);
+    snow.rotation.y=m.rotation.y;
+    scene.add(snow);
+
+    var b1=new T.Mesh(peakGeo,mRock);
+    b1.scale.set(p.w*0.7,p.h*0.75,p.w*0.7);
+    b1.position.set(p.x-25,p.h*0.35,p.z-p.w*0.35);
+    scene.add(b1);
+  });
+
+  for(var i=0;i<16;i++){
+    var z=-680+i*88;
+    var spurW=85+R()*30, spurH=65+R()*40;
+    var spurX=470+R()*40;
+    var sp=new T.Mesh(peakGeo,mFoothill);
+    sp.scale.set(spurW,spurH,spurW*1.2);
+    sp.position.set(spurX,spurH*0.48-2,z);
+    sp.rotation.y=R()*PI;
+    scene.add(sp);
+
+    var pSk=new T.Mesh(peakGeo,mPine);
+    pSk.scale.set(spurW*0.8,spurH*0.5,spurW*0.9);
+    pSk.position.set(spurX-30,spurH*0.22,z+15);
+    scene.add(pSk);
+  }
+
+  // Shankaracharya Hill
+  var shankarGroup=new T.Group();
+  shankarGroup.position.set(380,0,720);
+  var shankarHill=new T.Mesh(new T.ConeGeometry(120,135,9),mPine);
+  shankarHill.position.y=67;
+  shankarGroup.add(shankarHill);
+  var temple=new T.Mesh(new T.BoxGeometry(10,8,10),mat(0xc2b8a7));
+  temple.position.y=136;
+  var spire=new T.Mesh(new T.ConeGeometry(5,14,6),mat(0xb8a994));
+  spire.position.y=147;
+  shankarGroup.add(temple,spire);
+  scene.add(shankarGroup);
+
+  // Western hills
+  for(var j=0;j<14;j++){
+    var hz=-660+j*100;
+    var hw=100+R()*35, hh=85+R()*45;
+    var h=new T.Mesh(peakGeo,mat(0x505b54));
+    h.scale.set(hw,hh,hw);
+    h.position.set(-420-R()*60,hh/2-4,hz);
+    scene.add(h);
+
+    if(j===6){
+      var fort=new T.Mesh(new T.BoxGeometry(32,10,24),mat(0x73695d));
+      fort.position.set(-420,hh+2,hz);
+      scene.add(fort);
+    }
+  }
+})();
+
+/* =========================================================================
+   HOTELS & SHOPS (Including Burger Barn Landmark at z ≈ 405)
+   ========================================================================= */
+var winC=document.createElement('canvas');
+winC.width=winC.height=128;
+(function(){
+  var x=winC.getContext('2d');
+  x.fillStyle='#362419';x.fillRect(0,0,128,128);
+  x.fillStyle='#233a47';x.fillRect(10,10,48,48);x.fillRect(70,10,48,48);
+  x.fillStyle='#ffd885';x.fillRect(10,68,48,48);x.fillRect(70,68,48,48);
+  x.fillStyle='#1c120c';
+  x.fillRect(32,10,4,106);x.fillRect(92,10,4,106);
+  x.fillRect(10,32,108,4);x.fillRect(10,90,108,4);
+  x.fillStyle='#4d3222';x.fillRect(6,120,116,8);
+})();
+var winTex=new T.CanvasTexture(winC);
+winTex.wrapS=winTex.wrapT=T.RepeatWrapping;
+
+var signCache={};
+function signTex(n,bg,fg){
+  if(signCache[n])return signCache[n];
+  var c=document.createElement('canvas');c.width=512;c.height=112;var x=c.getContext('2d');
+  x.fillStyle=bg;x.fillRect(0,0,512,112);x.strokeStyle=fg;x.lineWidth=6;x.strokeRect(6,6,500,100);
+  var fs=54;x.font='bold '+fs+'px Arial,sans-serif';while(x.measureText(n).width>470){fs-=3;x.font='bold '+fs+'px Arial,sans-serif';}
+  x.fillStyle=fg;x.textAlign='center';x.textBaseline='middle';x.fillText(n,256,58);
+  var t=new T.CanvasTexture(c);signCache[n]=t;return t;
+}
+
+var SHOPS=[
+  ['Grand Boulevard Hotel','#1b365d','#ffffff',1,0xf3ede2,0x3e2718,0x244f36],
+  ['Ahdoos Heritage Hotel','#7a2518','#ffe8ba',1,0x9c4331,0x2c1a11,0x3a4247],
+  ['Hotel Pine & Peak','#1d4334','#e8f2ea',1,0x4f6b58,0x223627,0x8b271b],
+  ['Chinar Palace','#8a281c','#ffd79e',1,0xd9cbbe,0x4a2e1d,0x8b271b],
+  ['Lakeside Cedar Cafe','#3b281c','#f7e1b5',0,0x69462e,0x26190f,0x27523d],
+  ['Hotel Royal Heritage','#1c2d42','#d4af37',1,0xe2dbcf,0x263747,0x2c4e3b],
+  ['Wazwan Darbar','#6e1a1a','#fce5b8',0,0xa34537,0x381913,0x384147],
+  ['Pashmina Silk Palace','#4a154b','#ffffff',0,0xebdcd0,0x382216,0x8f261e],
+  ['Kahwa & Saffron Lounge','#b85d19','#ffffff',0,0x785135,0x2a1a0f,0x284f39],
+  ['The Lalit View Inn','#0f2b38','#e2b868',1,0xece6dc,0x1b3542,0x384147],
+  ['Kashmir Arts Emporium','#1e463a','#ffeaa7',0,0x964436,0x331a14,0x234d37],
+  ['Hotel Meena Bazaar','#2c2440','#f0d69b',1,0xdbd1c3,0x45281e,0x87291f]
+];
+
+var roofG=new T.ConeGeometry(0.53,0.5,4).rotateY(PI/4);
+
+for(var i=0;i<41;i++){
+  var z=-440+i*22+9;
+  var isBurgerBarn=(i===38);
+  var s=isBurgerBarn?['BURGER BARN','#b31414','#ffe600',0,0xdfc29e,0x8a2318,0xc43823]:SHOPS[i%SHOPS.length];
+  var hotel=isBurgerBarn?0:s[3], h=isBurgerBarn?12:(hotel?18+R()*8:9+R()*3);
+  var wallC=s[4], trimC=s[5], roofC=s[6];
+
+  var b=new T.Mesh(new T.BoxGeometry(14,h,18),mat(wallC));
+  b.position.set(-33,h/2,z);
+  scene.add(b);
+
+  var plinth=new T.Mesh(new T.BoxGeometry(14.4,1.4,18.4),mat(0x423832));
+  plinth.position.set(-33,0.7,z);
+  scene.add(plinth);
+
+  var colGeo=new T.BoxGeometry(0.6,h,0.6);
+  var cMat=mat(trimC);
+  var colF1=new T.Mesh(colGeo,cMat);colF1.position.set(-25.8,h/2,z-8.8);
+  var colF2=new T.Mesh(colGeo,cMat);colF2.position.set(-25.8,h/2,z+8.8);
+  scene.add(colF1,colF2);
+
+  var fm=new T.MeshLambertMaterial({map:winTex.clone(),transparent:true,color:0xffffff});
+  fm.map.needsUpdate=true;fm.map.wrapS=fm.map.wrapT=T.RepeatWrapping;
+  fm.map.repeat.set(4,Math.max(1,Math.round((h-5)/3.2)));
+  var fp=new T.Mesh(new T.PlaneGeometry(13.6,h-5).rotateY(PI/2),fm);
+  fp.position.set(-25.93,5+(h-5)/2,z);
+  scene.add(fp);
+
+  var gl=new T.Mesh(new T.PlaneGeometry(12,2.8).rotateY(PI/2),new T.MeshBasicMaterial({color:isBurgerBarn?0x54231b:0x223640}));
+  gl.position.set(-25.94,1.5,z);
+  scene.add(gl);
+
+  var sg=new T.Mesh(new T.PlaneGeometry(11,2.4).rotateY(PI/2),new T.MeshBasicMaterial({map:signTex(s[0],s[1],s[2])}));
+  sg.position.set(-25.88,3.9,z);
+  scene.add(sg);
+
+  var aw=new T.Mesh(new T.BoxGeometry(1.8,0.3,12),mat(isBurgerBarn?0xd49b28:trimC));
+  aw.position.set(-25.1,3.0,z);
+  scene.add(aw);
+
+  if(!hotel){
+    var rf=new T.Mesh(roofG,mat(roofC));
+    rf.scale.set(14.6,7,18.6);
+    rf.position.set(-33,h+1.7,z);
+    scene.add(rf);
+  } else {
+    var pr=new T.Mesh(new T.BoxGeometry(14.8,1.2,18.8),mat(trimC));
+    pr.position.set(-33,h+0.6,z);
+    var hr=new T.Mesh(roofG,mat(roofC));
+    hr.scale.set(14.2,6,18.2);
+    hr.position.set(-33,h+3.6,z);
+    scene.add(pr,hr);
+  }
+
+  if(isBurgerBarn){
+    var tableMat=mat(0x8a2318);
+    for(var tO=-4;tO<=4;tO+=4){
+      var tbl=new T.Mesh(new T.CylinderGeometry(0.9,0.9,0.8,8),tableMat);
+      tbl.position.set(-23.5,0.4,z+tO);
+      var umb=new T.Mesh(new T.ConeGeometry(1.8,0.6,8),mat(0xf2a900));
+      umb.position.set(-23.5,2.1,z+tO);
+      var pole=new T.Mesh(new T.CylinderGeometry(0.04,0.04,1.8,4),mat(0x222222));
+      pole.position.set(-23.5,1.1,z+tO);
+      scene.add(tbl,umb,pole);
+    }
+  }
+}
+
+/* =========================================================================
+   CHECKPOINT AT BURGER BARN ROAD ENDING
+   ========================================================================= */
+var CHECKPOINT_Z=413;
+var amberLights=[];
+
+function makeJerseyTex(){
+  var c=document.createElement('canvas');c.width=256;c.height=128;var cx=c.getContext('2d');
+  cx.fillStyle='#9e9d99';cx.fillRect(0,0,256,128);
+  cx.fillStyle='#ffb700';cx.fillRect(0,40,256,50);
+  cx.fillStyle='#1c1b18';
+  for(var i=-100;i<350;i+=40){
+    cx.beginPath();cx.moveTo(i,40);cx.lineTo(i+25,40);cx.lineTo(i-10,90);cx.lineTo(i-35,90);cx.closePath();cx.fill();
+  }
+  return new T.CanvasTexture(c);
+}
+var jerseyTex=makeJerseyTex();jerseyTex.wrapS=jerseyTex.wrapT=T.RepeatWrapping;jerseyTex.repeat.set(1,1);
+
+function makePoliceBannerTex(){
+  var c=document.createElement('canvas');c.width=512;c.height=140;var cx=c.getContext('2d');
+  cx.fillStyle='#0f2038';cx.fillRect(0,0,512,140);
+  cx.fillStyle='#a81919';cx.fillRect(0,0,512,24);cx.fillRect(0,116,512,24);
+  cx.strokeStyle='#d4af37';cx.lineWidth=4;cx.strokeRect(6,6,500,128);
+  cx.fillStyle='#ffea75';cx.font='bold 22px Arial,sans-serif';cx.textAlign='center';
+  cx.fillText('JAMMU & KASHMIR POLICE',256,48);
+  cx.fillStyle='#ffffff';cx.font='bold 28px Arial,sans-serif';
+  cx.fillText('CHECK POST — ALL VEHICLES STOP',256,84);
+  cx.fillStyle='#ffc107';cx.font='bold 14px Arial,sans-serif';
+  cx.fillText('RESTRICTED BORDER ZONE • ENTRY BY PERMIT ONLY',256,108);
+  return new T.CanvasTexture(c);
+}
+
+function makeRoadClosedSignTex(){
+  var c=document.createElement('canvas');c.width=512;c.height=140;var cx=c.getContext('2d');
+  cx.fillStyle='#ffcc00';cx.fillRect(0,0,512,140);
+  cx.fillStyle='#d32f2f';
+  for(var i=0;i<512;i+=28){
+    cx.fillRect(i,0,14,14);cx.fillRect(i,126,14,14);
+  }
+  cx.strokeStyle='#b71c1c';cx.lineWidth=6;cx.strokeRect(6,6,500,128);
+  cx.fillStyle='#b71c1c';cx.font='900 32px Arial,sans-serif';cx.textAlign='center';
+  cx.fillText('ROAD CLOSED',256,48);
+  cx.fillStyle='#111111';cx.font='bold 21px Arial,sans-serif';
+  cx.fillText('NO VEHICLE ENTRY BEYOND THIS POINT',256,84);
+  cx.fillStyle='#b71c1c';cx.font='bold 15px Arial,sans-serif';
+  cx.fillText('✦ TRESPASSERS WILL BE PROSECUTED ✦',256,110);
+  return new T.CanvasTexture(c);
+}
+
+function makeMetalBarricadeTex(){
+  var c=document.createElement('canvas');c.width=256;c.height=64;var cx=c.getContext('2d');
+  cx.fillStyle='#e0e0e0';cx.fillRect(0,0,256,64);
+  cx.fillStyle='#d32f2f';
+  for(var i=-50;i<300;i+=32){
+    cx.beginPath();cx.moveTo(i,0);cx.lineTo(i+16,0);cx.lineTo(i-10,64);cx.lineTo(i-26,64);cx.closePath();cx.fill();
+  }
+  cx.fillStyle='#0f2038';cx.fillRect(30,14,196,36);
+  cx.fillStyle='#ffeb3b';cx.font='bold 20px Arial,sans-serif';cx.textAlign='center';
+  cx.fillText('JK POLICE',128,39);
+  return new T.CanvasTexture(c);
+}
+var metalBarricadeTex=makeMetalBarricadeTex();
+
+(function buildRoadEndingCheckpoint(){
+  var cp=new T.Group();
+  var jMat=new T.MeshLambertMaterial({map:jerseyTex});
+
+  // Concrete Jersey Barriers
+  for(var x=-23;x<=17;x+=4.4){
+    var jb=new T.Group();
+    var base=new T.Mesh(new T.BoxGeometry(4.2,0.4,1.4),jMat);base.position.y=0.2;
+    var mid=new T.Mesh(new T.BoxGeometry(4.2,0.6,0.9),jMat);mid.position.y=0.7;
+    var top=new T.Mesh(new T.BoxGeometry(4.2,0.4,0.5),jMat);top.position.y=1.2;
+    jb.add(base,mid,top);
+    jb.position.set(x,0,CHECKPOINT_Z);
+    cp.add(jb);
+  }
+
+  // Metal Police Barricades
+  var mbMat=new T.MeshLambertMaterial({map:metalBarricadeTex});
+  var pipeMat=mat(0x222222);
+  var pipeGeo=new T.CylinderGeometry(0.04,0.04,1.6,6);
+  for(var bx=-21;bx<=15;bx+=4.8){
+    var bar=new T.Group();
+    var panel=new T.Mesh(new T.BoxGeometry(4.2,0.85,0.08),mbMat);panel.position.y=1.1;
+    var postL=new T.Mesh(pipeGeo,pipeMat);postL.position.set(-2.0,0.8,0);
+    var postR=new T.Mesh(pipeGeo,pipeMat);postR.position.set(2.0,0.8,0);
+    var legL=new T.Mesh(new T.BoxGeometry(0.08,0.1,1.1),pipeMat);legL.position.set(-2.0,0.05,0);
+    var legR=new T.Mesh(new T.BoxGeometry(0.08,0.1,1.1),pipeMat);legR.position.set(2.0,0.05,0);
+    bar.add(panel,postL,postR,legL,legR);
+    bar.position.set(bx,0,CHECKPOINT_Z-1.8);
+    cp.add(bar);
+  }
+
+  // Coiled Razor Wire
+  var coilGeo=new T.TorusGeometry(0.48,0.03,5,12);
+  var wireMat=new T.MeshStandardMaterial({color:0xdfe7ec,roughness:0.3,metalness:0.9});
+  var totalCoils=130;
+  var wireMesh=new T.InstancedMesh(coilGeo,wireMat,totalCoils);
+  var dCoil=new T.Object3D();
+  var cIdx=0;
+
+  for(var wx=-23;wx<=17;wx+=0.6){
+    if(cIdx>=totalCoils)break;
+    dCoil.position.set(wx,1.85,CHECKPOINT_Z+Math.sin(wx*2)*0.08);
+    dCoil.rotation.set(0.1,wx*1.2,PI/2);
+    dCoil.updateMatrix();
+    wireMesh.setMatrixAt(cIdx++,dCoil.matrix);
+  }
+  for(var wx2=-22;wx2<=16;wx2+=0.7){
+    if(cIdx>=totalCoils)break;
+    dCoil.position.set(wx2,0.48,CHECKPOINT_Z-0.8);
+    dCoil.rotation.set(-0.1,-wx2*1.3,PI/2);
+    dCoil.updateMatrix();
+    wireMesh.setMatrixAt(cIdx++,dCoil.matrix);
+  }
+  wireMesh.instanceMatrix.needsUpdate=true;
+  cp.add(wireMesh);
+
+  // Fence Posts
+  var postGeo=new T.BoxGeometry(0.08,2.4,0.08);
+  var steelMat=mat(0x384147);
+  for(var px=-23;px<=17;px+=3.6){
+    var stP=new T.Mesh(postGeo,steelMat);
+    stP.position.set(px,1.2,CHECKPOINT_Z);
+    var armL=new T.Mesh(new T.BoxGeometry(0.06,0.5,0.06),steelMat);armL.position.set(0,1.2,-0.18);armL.rotation.x=0.6;
+    var armR=new T.Mesh(new T.BoxGeometry(0.06,0.5,0.06),steelMat);armR.position.set(0,1.2,0.18);armR.rotation.x=-0.6;
+    stP.add(armL,armR);
+    cp.add(stP);
+  }
+
+  // Gantry Signs
+  var gantryPillarMat=mat(0x283238);
+  var gantryPillarL=new T.Mesh(new T.BoxGeometry(0.4,6.2,0.4),gantryPillarMat);
+  gantryPillarL.position.set(-8.5,3.1,CHECKPOINT_Z);
+  var gantryPillarR=new T.Mesh(new T.BoxGeometry(0.4,6.2,0.4),gantryPillarMat);
+  gantryPillarR.position.set(8.5,3.1,CHECKPOINT_Z);
+  var gantryBeam=new T.Mesh(new T.BoxGeometry(17.4,0.4,0.4),gantryPillarMat);
+  gantryBeam.position.set(0,6.0,CHECKPOINT_Z);
+  cp.add(gantryPillarL,gantryPillarR,gantryBeam);
+
+  var rcSign=new T.Mesh(new T.PlaneGeometry(10.5,2.6),new T.MeshBasicMaterial({map:makeRoadClosedSignTex()}));
+  rcSign.position.set(0,4.8,CHECKPOINT_Z-0.3);
+  cp.add(rcSign);
+
+  var jkSign=new T.Mesh(new T.PlaneGeometry(9.6,2.4),new T.MeshBasicMaterial({map:makePoliceBannerTex()}));
+  jkSign.position.set(0,2.5,CHECKPOINT_Z-0.3);
+  cp.add(jkSign);
+
+  // Warning Lights
+  var amberMat=new T.MeshBasicMaterial({color:0xffaa00});
+  [-8.5,-3.5,3.5,8.5].forEach(function(lx){
+    var bulb=new T.Mesh(new T.SphereGeometry(0.28,8,6),amberMat);
+    bulb.position.set(lx,6.4,CHECKPOINT_Z);
+    cp.add(bulb);
+    amberLights.push(bulb);
+  });
+
+  // Police Sentry Booth
+  var boothGroup=new T.Group();
+  boothGroup.position.set(-14.5,0,CHECKPOINT_Z-3.5);
+  var sandbagMat=mat(0xa6957b);
+  for(var sy=0;sy<3;sy++){
+    for(var sx=-2.4;sx<=2.4;sx+=1.2){
+      var sb=new T.Mesh(new T.BoxGeometry(1.1,0.32,0.7),sandbagMat);
+      sb.position.set(sx,0.16+sy*0.3,1.8);
+      boothGroup.add(sb);
+    }
+  }
+
+  var cabin=new T.Mesh(new T.BoxGeometry(3.6,3.4,3.6),mat(0x2f4035));
+  cabin.position.set(0,1.7,0);
+  var tinRoof=new T.Mesh(new T.ConeGeometry(2.8,1.2,4).rotateY(PI/4),mat(0x6e2c24));
+  tinRoof.position.set(0,4.0,0);
+  var slit=new T.Mesh(new T.PlaneGeometry(2.2,0.8),new T.MeshBasicMaterial({color:0x111c15}));
+  slit.position.set(0,2.2,1.81);
+  var boothSign=new T.Mesh(new T.PlaneGeometry(2.6,0.6),new T.MeshBasicMaterial({map:signTex('JK POLICE POST NO. 4','#0f2038','#ffeb3b')}));
+  boothSign.position.set(0,3.2,1.82);
+
+  var boomPole=new T.Mesh(new T.CylinderGeometry(0.1,0.1,1.4,6),mat(0x111111));
+  boomPole.position.set(2.2,0.7,1.0);
+  var boomArm=new T.Mesh(new T.BoxGeometry(6.2,0.18,0.1),mat(0xff3333));
+  boomArm.position.set(5.2,1.0,1.0);
+  boothGroup.add(cabin,tinRoof,slit,boothSign,boomPole,boomArm);
+  cp.add(boothGroup);
+
+  scene.add(cp);
+})();
+
+/* =========================================================================
+   DAL LAKE: AUTHENTIC KASHMIRI LUXURY HOUSEBOATS & SHIKARAS
+   ========================================================================= */
+var HB_LIST=[];
+var SHIKARA_LIST=[];
+
+var hbNameCache={};
+function makeHBNameboardTex(name,style){
+  var key=name+'_'+style;
+  if(hbNameCache[key])return hbNameCache[key];
+  var c=document.createElement('canvas');c.width=512;c.height=110;var cx=c.getContext('2d');
+  cx.fillStyle='#2c190f';cx.fillRect(0,0,512,110);
+  cx.strokeStyle='#d4af37';cx.lineWidth=5;cx.strokeRect(6,6,500,98);
+  cx.strokeStyle='#e8c868';cx.lineWidth=2;cx.strokeRect(12,12,488,86);
+  cx.fillStyle='#d4af37';
+  cx.font='18px serif';cx.fillText('✦',18,30);cx.fillText('✦',494,30);cx.fillText('✦',18,92);cx.fillText('✦',494,92);
+  cx.fillStyle='#fff3db';
+  var fs=34;cx.font='bold '+fs+'px "Times New Roman",serif';
+  while(cx.measureText(name).width>440){fs-=2;cx.font='bold '+fs+'px "Times New Roman",serif';}
+  cx.textAlign='center';cx.textBaseline='middle';
+  cx.fillText(name,256,48);
+  cx.fillStyle='#e5b550';cx.font='bold 15px Arial,sans-serif';
+  cx.fillText(style.toUpperCase(),256,80);
+  var t=new T.CanvasTexture(c);hbNameCache[key]=t;return t;
+}
+
+var hbWinTex=(function(){
+  var c=document.createElement('canvas');c.width=256;c.height=128;var cx=c.getContext('2d');
+  cx.fillStyle='#361e12';cx.fillRect(0,0,256,128);
+  for(var i=10;i<240;i+=60){
+    cx.fillStyle='#ffe599';cx.fillRect(i,16,48,96);
+    cx.fillStyle='#26150b';
+    cx.fillRect(i+22,16,4,96);cx.fillRect(i,54,48,4);cx.fillRect(i,84,48,4);
+    cx.fillStyle='#d93829';
+    cx.beginPath();cx.moveTo(i,16);cx.lineTo(i+14,16);cx.lineTo(i,60);cx.closePath();cx.fill();
+    cx.beginPath();cx.moveTo(i+48,16);cx.lineTo(i+34,16);cx.lineTo(i+48,60);cx.closePath();cx.fill();
+  }
+  return new T.CanvasTexture(c);
+})();
+hbWinTex.wrapS=hbWinTex.wrapT=T.RepeatWrapping;
+
+function buildLuxuryHouseboat(cfg){
+  var g=new T.Group();
+  var woodMat=mat(cfg.woodTone);
+  var trimMat=mat(0x23140b);
+  var roofMat=mat(cfg.roofColor);
+  var L=cfg.len, W=cfg.w, H=3.6;
+
+  // Hull
+  var hullBase=new T.Mesh(new T.BoxGeometry(W,1.8,L-4),woodMat);hullBase.position.y=0.9;
+  var bowProw=new T.Mesh(new T.ConeGeometry(W*0.6,4,4).rotateX(-PI/2),woodMat);bowProw.position.set(0,1.2,L/2-1);
+  var sternProw=new T.Mesh(new T.ConeGeometry(W*0.6,3.6,4).rotateX(PI/2),woodMat);sternProw.position.set(0,1.2,-L/2+1);
+  g.add(hullBase,bowProw,sternProw);
+
+  // Cabin
+  var cabinW=W*0.86, cabinL=L-7;
+  var cabin=new T.Mesh(new T.BoxGeometry(cabinW,H,cabinL),woodMat);
+  cabin.position.set(0,2.9,-1.2);
+  g.add(cabin);
+
+  var winMat=new T.MeshLambertMaterial({map:hbWinTex});
+  var winL=new T.Mesh(new T.PlaneGeometry(cabinL*0.9,H*0.55).rotateY(PI/2),winMat);winL.position.set(-cabinW/2-0.02,3.1,-1.2);
+  var winR=new T.Mesh(new T.PlaneGeometry(cabinL*0.9,H*0.55).rotateY(-PI/2),winMat);winR.position.set(cabinW/2+0.02,3.1,-1.2);
+  g.add(winL,winR);
+
+  // Front Veranda
+  var verandaL=4.4;
+  var vDeck=new T.Mesh(new T.BoxGeometry(cabinW+0.4,0.3,verandaL),trimMat);vDeck.position.set(0,1.75,L/2-3.8);
+  g.add(vDeck);
+
+  var pillarGeo=new T.CylinderGeometry(0.09,0.09,2.8,6);
+  var pillarMat=mat(0xecd4b4);
+  [-cabinW*0.42, cabinW*0.42].forEach(function(px){
+    [L/2-2.0, L/2-4.8].forEach(function(pz){
+      var pil=new T.Mesh(pillarGeo,pillarMat);pil.position.set(px,3.15,pz);g.add(pil);
+    });
+  });
+
+  var vRailGeo=new T.BoxGeometry(0.12,0.85,verandaL);
+  var railMat=mat(0x3e2315);
+  var vRailL=new T.Mesh(vRailGeo,railMat);vRailL.position.set(-cabinW/2,2.25,L/2-3.8);
+  var vRailR=new T.Mesh(vRailGeo,railMat);vRailR.position.set(cabinW/2,2.25,L/2-3.8);
+  var vRailF=new T.Mesh(new T.BoxGeometry(cabinW,0.85,0.12),railMat);vRailF.position.set(0,2.25,L/2-1.6);
+  g.add(vRailL,vRailR,vRailF);
+
+  var chairMat=mat(0xc29b62);
+  var ch1=new T.Mesh(new T.CylinderGeometry(0.4,0.4,0.6,6),chairMat);ch1.position.set(-1.1,2.15,L/2-3.2);
+  var ch2=new T.Mesh(new T.CylinderGeometry(0.4,0.4,0.6,6),chairMat);ch2.position.set(1.1,2.15,L/2-3.2);
+  var tab=new T.Mesh(new T.CylinderGeometry(0.5,0.5,0.7,6),trimMat);tab.position.set(0,2.18,L/2-3.2);
+  g.add(ch1,ch2,tab);
+
+  // Nameboard
+  var nbMat=new T.MeshBasicMaterial({map:makeHBNameboardTex(cfg.name,cfg.style)});
+  var nbMesh=new T.Mesh(new T.PlaneGeometry(3.6,0.9),nbMat);nbMesh.position.set(0,4.8,L/2-1.7);
+  g.add(nbMesh);
+
+  // Roof & Eaves
+  var roof=new T.Mesh(new T.BoxGeometry(cabinW+0.8,0.9,L-3.5),roofMat);roof.position.set(0,4.8,-1.2);
+  var eavesF=new T.Mesh(new T.BoxGeometry(cabinW+1.0,0.3,0.2),trimMat);eavesF.position.set(0,4.4,L/2-1.5);
+  g.add(roof,eavesF);
+
+  // Rooftop Sun Deck
+  if(cfg.hasSunDeck){
+    var deckL=cabinL*0.6;
+    var dFloor=new T.Mesh(new T.BoxGeometry(cabinW-0.4,0.15,deckL),trimMat);dFloor.position.set(0,5.3,-2.2);
+    var dRFront=new T.Mesh(new T.BoxGeometry(cabinW-0.4,0.75,0.1),railMat);dRFront.position.set(0,5.75,-2.2+deckL/2);
+    var dRBack=new T.Mesh(new T.BoxGeometry(cabinW-0.4,0.75,0.1),railMat);dRBack.position.set(0,5.75,-2.2-deckL/2);
+    var dRSideL=new T.Mesh(new T.BoxGeometry(0.1,0.75,deckL),railMat);dRSideL.position.set(-(cabinW-0.4)/2,5.75,-2.2);
+    var dRSideR=new T.Mesh(new T.BoxGeometry(0.1,0.75,deckL),railMat);dRSideR.position.set((cabinW-0.4)/2,5.75,-2.2);
+    g.add(dFloor,dRFront,dRBack,dRSideL,dRSideR);
+
+    var parasol=new T.Mesh(new T.ConeGeometry(1.6,0.5,8),mat(0xf2a900));parasol.position.set(0,7.3,-2.2);
+    var pPole=new T.Mesh(new T.CylinderGeometry(0.04,0.04,1.8,4),mat(0x222222));pPole.position.set(0,6.4,-2.2);
+    g.add(parasol,pPole);
+
+    var planterMat=mat(0x943b2c), flowerMat=mat(0xff3b6f);
+    [-cabinW*0.35, cabinW*0.35].forEach(function(fx){
+      var plBox=new T.Mesh(new T.BoxGeometry(0.4,0.3,1.4),planterMat);plBox.position.set(fx,5.8,-2.2);
+      var fls=new T.Mesh(new T.SphereGeometry(0.3,5,4),flowerMat);fls.position.set(fx,6.0,-2.2);
+      g.add(plBox,fls);
+    });
+  }
+
+  // Pier connection
+  var pierL=cfg.x-17.4;
+  if(pierL>2.0){
+    var pier=new T.Mesh(new T.BoxGeometry(pierL,0.3,1.8),trimMat);pier.position.set(-pierL/2-cabinW/2,1.6,L/2-3.8);
+    g.add(pier);
+    for(var px=-pierL;px<=-2;px+=3.8){
+      var pile=new T.Mesh(new T.CylinderGeometry(0.12,0.12,3.5,6),trimMat);pile.position.set(px,-0.2,L/2-3.8);
+      g.add(pile);
+    }
+  }
+
+  [-cabinW*0.7, cabinW*0.7].forEach(function(mx){
+    var mPost=new T.Mesh(new T.CylinderGeometry(0.14,0.14,3.2,6),trimMat);mPost.position.set(mx,0.6,L/2+0.8);
+    g.add(mPost);
+  });
+
+  g.position.set(cfg.x,0.1,cfg.z);
+  g.rotation.y=cfg.rotY;
+  scene.add(g);
+  HB_LIST.push({group:g, baseY:0.1, z:cfg.z, x:cfg.x});
+}
+
+var HB_CONFIGS=[
+  {name:'H.B. Pride of Kashmir', style:'Super Deluxe Luxury', x:40, z:365, rotY:0.06, len:28, w:6.2, woodTone:0x523623, roofColor:0x1e4f35, hasSunDeck:true},
+  {name:'H.B. Sukoon', style:'Luxury Eco Houseboat', x:72, z:315, rotY:-0.10, len:26, w:5.8, woodTone:0x3d2719, roofColor:0x3b4247, hasSunDeck:true},
+  {name:'H.B. Mughal Sheraton', style:'Deluxe Heritage', x:38, z:235, rotY:0.04, len:25, w:5.6, woodTone:0x6b452d, roofColor:0x85291e, hasSunDeck:false},
+  {name:'H.B. Queen of Heaven', style:'Royal Deluxe Palace', x:42, z:180, rotY:-0.05, len:29, w:6.4, woodTone:0x5a3b26, roofColor:0x1e4f35, hasSunDeck:true},
+  {name:'H.B. New Alexandra', style:'Heritage Luxury', x:75, z:120, rotY:0.12, len:26, w:5.8, woodTone:0x4d311e, roofColor:0x8a2b20, hasSunDeck:false},
+  {name:'H.B. Golden Lily', style:'Super Deluxe', x:39, z:60, rotY:0.03, len:25, w:5.6, woodTone:0x63412a, roofColor:0x225439, hasSunDeck:true},
+  {name:'H.B. Mascot', style:'Luxury Houseboat', x:74, z:5, rotY:-0.08, len:27, w:6.0, woodTone:0x422a18, roofColor:0x3b4247, hasSunDeck:true},
+  {name:'H.B. Fairy Land', style:'Deluxe Houseboat', x:41, z:-85, rotY:0.06, len:26, w:5.8, woodTone:0x5e3e29, roofColor:0x87291e, hasSunDeck:true},
+  {name:'H.B. Indoora Palace', style:'Grand Heritage', x:76, z:-170, rotY:-0.11, len:30, w:6.4, woodTone:0x3a2416, roofColor:0x1f5237, hasSunDeck:true},
+  {name:'H.B. Lake Victoria', style:'Heritage Palace', x:40, z:-250, rotY:0.04, len:27, w:6.0, woodTone:0x63422a, roofColor:0x384147, hasSunDeck:false},
+  {name:'H.B. Gurkha Houseboats', style:'Royal Luxury Group', x:75, z:-330, rotY:-0.07, len:26, w:5.8, woodTone:0x4f3421, roofColor:0x87291e, hasSunDeck:true},
+  {name:'H.B. Meena Mahal', style:'Deluxe Heritage', x:42, z:-405, rotY:0.05, len:25, w:5.6, woodTone:0x583a25, roofColor:0x215438, hasSunDeck:false}
+];
+HB_CONFIGS.forEach(buildLuxuryHouseboat);
+
+// Shikaras
+(function buildShikaraFlotilla(){
+  var sCanopyColors=[0xe8a33d,0xb8432f,0x2e8f8a,0x9c3d8f,0xd9722b,0x3e7a5e];
+  for(var i=0;i<7;i++){
+    var sg=new T.Group();
+    var sHull=new T.Mesh(new T.ConeGeometry(1.2,7,4).rotateX(-PI/2),mat(0x543621));
+    sHull.scale.set(0.9,0.38,1);sHull.position.y=0.25;
+    var sRoof=new T.Mesh(new T.BoxGeometry(1.5,1.2,3.2),mat(sCanopyColors[i%sCanopyColors.length]));
+    sRoof.position.set(0,1.2,0.2);
+    var pMat=mat(0xd4af37);
+    [[-0.6,-1.2],[0.6,-1.2],[-0.6,1.4],[0.6,1.4]].forEach(function(po){
+      var pt=new T.Mesh(new T.CylinderGeometry(0.04,0.04,1.2,4),pMat);
+      pt.position.set(po[0],0.7,po[1]);sg.add(pt);
+    });
+    sg.add(sHull,sRoof);
+    var sx=65+R()*40, sz=-380+i*110+R()*25;
+    sg.position.set(sx,0.1,sz);
+    sg.rotation.y=(i%2?0.1:-0.1);
+    scene.add(sg);
+    SHIKARA_LIST.push({group:sg, sp:1.2+R()*1.4, dir:i%2?1:-1, baseZ:sz, isFlower:false});
+  }
+
+  for(var f=0;f<3;f++){
+    var fg=new T.Group();
+    var fHull=new T.Mesh(new T.ConeGeometry(1.1,6.5,4).rotateX(-PI/2),mat(0x482d1b));
+    fHull.scale.set(0.85,0.36,1);fHull.position.y=0.25;
+    fg.add(fHull);
+
+    var fColors=[0xff1744,0xffeb3b,0x9c27b0,0xff9800,0x00e676];
+    for(var b=0;b<5;b++){
+      var basket=new T.Mesh(new T.CylinderGeometry(0.35,0.25,0.4,6),mat(0x94724b));
+      basket.position.set((b%2===0?-0.25:0.25),0.4,-1.0+b*0.55);
+      var blooms=new T.Mesh(new T.SphereGeometry(0.32,6,4),mat(fColors[b]));
+      blooms.position.set((b%2===0?-0.25:0.25),0.6,-1.0+b*0.55);
+      fg.add(basket,blooms);
+    }
+    var boatman=new T.Mesh(new T.CylinderGeometry(0.25,0.3,0.7,5),mat(0x4a5d58));boatman.position.set(0,0.55,-2.2);
+    var bHead=new T.Mesh(new T.SphereGeometry(0.18,6,6),mat(0xd99f7d));bHead.position.set(0,1.05,-2.2);
+    var oar=new T.Mesh(new T.CylinderGeometry(0.03,0.03,2.2,4).rotateZ(0.4),mat(0x734827));oar.position.set(0.5,0.5,-2.2);
+    fg.add(boatman,bHead,oar);
+
+    var fx=50+f*35, fz=-200+f*240;
+    fg.position.set(fx,0.1,fz);
+    scene.add(fg);
+    SHIKARA_LIST.push({group:fg, sp:0.8, dir:1, baseZ:fz, isFlower:true});
+  }
+
+  var N=150,pads=new T.InstancedMesh(new T.CircleGeometry(1,7).rotateX(-PI/2),new T.MeshLambertMaterial({color:0xffffff}),N),d=new T.Object3D(),col=new T.Color();
+  for(var i=0;i<N;i++){
+    d.position.set(24+R()*280,0.14,-430+R()*860);
+    var sc=0.6+R()*0.9;d.scale.set(sc,1,sc);d.updateMatrix();pads.setMatrixAt(i,d.matrix);
+    pads.setColorAt(i,col.setHex(i%6?0x2d6b38:0xf57fa0));
+  }
+  scene.add(pads);
+})();
+
+/* =========================================================================
+   3D LIGHT-CYAN ELECTRIC BATTERY AUTO (E-RICKSHAW) — PLAYER VEHICLE
+   ========================================================================= */
+var car = new T.Group();
+var autoBody = new T.Group();
+car.add(autoBody);
+
+// Materials for Electric Auto
+var matCyan = new T.MeshStandardMaterial({color: 0x3ac2de, roughness: 0.28, metalness: 0.22}); // Light cyan body paint
+var matBlueCanopy = new T.MeshStandardMaterial({color: 0x1b6ec7, roughness: 0.85, metalness: 0.04}); // Vibrant blue waterproof fabric
+var matCanopyTrim = new T.MeshLambertMaterial({color: 0x11161a}); // Dark canopy welt/piping
+var matBlackMetal = new T.MeshStandardMaterial({color: 0x22262a, roughness: 0.45, metalness: 0.7}); // Frame/handlebars
+var matLeather = new T.MeshLambertMaterial({color: 0x181818}); // Black seat cushions
+var matRubber = new T.MeshLambertMaterial({color: 0x1c1c1c}); // Tyres
+var matRim = new T.MeshStandardMaterial({color: 0xd2d7dc, roughness: 0.35, metalness: 0.85}); // Silver steel rims
+var matGlass = new T.MeshStandardMaterial({color: 0xd2f2ff, transparent: true, opacity: 0.42, roughness: 0.08, metalness: 0.2}); // Glass
+var matChrome = new T.MeshStandardMaterial({color: 0xeeeeee, roughness: 0.15, metalness: 0.95}); // Chrome bezels/mirrors
+
+// Shared wheel geometry (radius = 0.27m, width = 0.13m)
+var R_WHEEL = 0.27;
+var tyreGeo = new T.CylinderGeometry(R_WHEEL, R_WHEEL, 0.13, 16).rotateZ(PI/2);
+var rimGeo = new T.CylinderGeometry(0.17, 0.17, 0.135, 12).rotateZ(PI/2);
+var hubGeo = new T.CylinderGeometry(0.06, 0.06, 0.145, 8).rotateZ(PI/2);
+
+function createWheelMesh(){
+  var wg = new T.Group();
+  var tyre = new T.Mesh(tyreGeo, matRubber);
+  var rim = new T.Mesh(rimGeo, matRim);
+  var hub = new T.Mesh(hubGeo, matBlackMetal);
+  wg.add(tyre, rim, hub);
+  return wg;
+}
+
+// 1. Lower Chassis & Textured Black Floorboard
+var chassisFrame = new T.Mesh(new T.BoxGeometry(0.96, 0.06, 2.3), matBlackMetal);
+chassisFrame.position.set(0, 0.32, -0.05);
+var floorMat = new T.Mesh(new T.BoxGeometry(0.92, 0.02, 2.2), matLeather);
+floorMat.position.set(0, 0.36, -0.05);
+autoBody.add(chassisFrame, floorMat);
+
+// 2. Lower Exterior Cyan-Blue Body Structure
+var battBox = new T.Mesh(new T.BoxGeometry(0.98, 0.28, 1.3), matCyan);
+battBox.position.set(0, 0.48, -0.45);
+autoBody.add(battBox);
+
+var hatchMat = new T.MeshLambertMaterial({color: 0x2ea5be});
+var hatchL = new T.Mesh(new T.PlaneGeometry(0.42, 0.2).rotateY(-PI/2), hatchMat);
+hatchL.position.set(-0.495, 0.48, -0.38);
+var hatchR = new T.Mesh(new T.PlaneGeometry(0.42, 0.2).rotateY(PI/2), hatchMat);
+hatchR.position.set(0.495, 0.48, -0.38);
+var chargePort = new T.Mesh(new T.CylinderGeometry(0.04, 0.04, 0.02, 10).rotateZ(PI/2), matBlackMetal);
+chargePort.position.set(0.495, 0.52, -0.75);
+autoBody.add(hatchL, hatchR, chargePort);
+
+var rearBulkhead = new T.Mesh(new T.BoxGeometry(0.98, 0.56, 0.1), matCyan);
+rearBulkhead.position.set(0, 0.68, -1.1);
+var rearPanelL = new T.Mesh(new T.BoxGeometry(0.08, 0.56, 0.45), matCyan);
+rearPanelL.position.set(-0.45, 0.68, -0.92);
+var rearPanelR = new T.Mesh(new T.BoxGeometry(0.08, 0.56, 0.45), matCyan);
+rearPanelR.position.set(0.45, 0.68, -0.92);
+autoBody.add(rearBulkhead, rearPanelL, rearPanelR);
+
+var archGeo = new T.CylinderGeometry(0.34, 0.34, 0.16, 12, 1, false, 0, PI).rotateZ(PI/2);
+var archL = new T.Mesh(archGeo, matCyan);archL.position.set(-0.46, 0.36, -0.72);
+var archR = new T.Mesh(archGeo, matCyan);archR.position.set(0.46, 0.36, -0.72);
+autoBody.add(archL, archR);
+
+var noseLower = new T.Mesh(new T.BoxGeometry(0.74, 0.36, 0.32), matCyan);
+noseLower.position.set(0, 0.48, 0.85);
+var noseUpper = new T.Mesh(new T.BoxGeometry(0.82, 0.48, 0.18), matCyan);
+noseUpper.position.set(0, 0.84, 0.76);
+noseUpper.rotation.x = -0.22;
+autoBody.add(noseLower, noseUpper);
+
+var frontBumper = new T.Mesh(new T.CylinderGeometry(0.035, 0.035, 0.78, 8).rotateZ(PI/2), matBlackMetal);
+frontBumper.position.set(0, 0.28, 1.08);
+var rearBumper = new T.Mesh(new T.CylinderGeometry(0.035, 0.035, 1.04, 8).rotateZ(PI/2), matBlackMetal);
+rearBumper.position.set(0, 0.26, -1.18);
+autoBody.add(frontBumper, rearBumper);
+
+// Headlight with Chrome Bezel
+var hlBezel = new T.Mesh(new T.CylinderGeometry(0.12, 0.12, 0.08, 14).rotateX(PI/2), matChrome);
+hlBezel.position.set(0, 0.74, 0.98);
+var hlLens = new T.Mesh(new T.CylinderGeometry(0.09, 0.09, 0.09, 14).rotateX(PI/2),
+  new T.MeshStandardMaterial({color: 0xffffff, emissive: 0xfff3cc, emissiveIntensity: 0.9}));
+hlLens.position.set(0, 0.74, 0.99);
+autoBody.add(hlBezel, hlLens);
+
+var indGeo = new T.BoxGeometry(0.06, 0.06, 0.04);
+var indMat = new T.MeshStandardMaterial({color: 0xffa000, emissive: 0xff7b00, emissiveIntensity: 0.6});
+var indL = new T.Mesh(indGeo, indMat);indL.position.set(-0.35, 0.74, 0.86);
+var indR = new T.Mesh(indGeo, indMat);indR.position.set(0.35, 0.74, 0.86);
+var tailMat = new T.MeshStandardMaterial({color: 0xd61818, emissive: 0x9e0e0e, emissiveIntensity: 0.7});
+var tailL = new T.Mesh(new T.BoxGeometry(0.08, 0.12, 0.04), tailMat);tailL.position.set(-0.42, 0.64, -1.16);
+var tailR = new T.Mesh(new T.BoxGeometry(0.08, 0.12, 0.04), tailMat);tailR.position.set(0.42, 0.64, -1.16);
+autoBody.add(indL, indR, tailL, tailR);
+
+// Interior Seats
+var driverSeat = new T.Mesh(new T.BoxGeometry(0.38, 0.14, 0.36), matLeather);
+driverSeat.position.set(0, 0.62, 0.18);
+var driverBack = new T.Mesh(new T.BoxGeometry(0.32, 0.18, 0.08), matLeather);
+driverBack.position.set(0, 0.78, 0.01);
+autoBody.add(driverSeat, driverBack);
+
+var passBench = new T.Mesh(new T.BoxGeometry(0.92, 0.16, 0.44), matLeather);
+passBench.position.set(0, 0.62, -0.74);
+var passBackrest = new T.Mesh(new T.BoxGeometry(0.92, 0.44, 0.12), matLeather);
+passBackrest.position.set(0, 0.95, -1.02);
+var grabL = new T.Mesh(new T.BoxGeometry(0.04, 0.22, 0.32), matBlackMetal);grabL.position.set(-0.47, 0.78, -0.74);
+var grabR = new T.Mesh(new T.BoxGeometry(0.04, 0.22, 0.32), matBlackMetal);grabR.position.set(0.47, 0.78, -0.74);
+autoBody.add(passBench, passBackrest, grabL, grabR);
+
+// Roll Cage Pillars
+var pillarGeo = new T.CylinderGeometry(0.025, 0.025, 0.85, 6);
+var aPilL = new T.Mesh(pillarGeo, matBlackMetal);aPilL.position.set(-0.41, 1.25, 0.64);aPilL.rotation.x = -0.22;
+var aPilR = new T.Mesh(pillarGeo, matBlackMetal);aPilR.position.set(0.41, 1.25, 0.64);aPilR.rotation.x = -0.22;
+var bPilL = new T.Mesh(new T.CylinderGeometry(0.025, 0.025, 1.35, 6), matBlackMetal);bPilL.position.set(-0.49, 1.02, -0.06);
+var bPilR = new T.Mesh(new T.CylinderGeometry(0.025, 0.025, 1.35, 6), matBlackMetal);bPilR.position.set(0.49, 1.02, -0.06);
+var cPilL = new T.Mesh(new T.CylinderGeometry(0.025, 0.025, 0.75, 6), matBlackMetal);cPilL.position.set(-0.47, 1.35, -1.1);
+var cPilR = new T.Mesh(new T.CylinderGeometry(0.025, 0.025, 0.75, 6), matBlackMetal);cPilR.position.set(0.47, 1.35, -1.1);
+autoBody.add(aPilL, aPilR, bPilL, bPilR, cPilL, cPilR);
+
+// Windshield & Wiper
+var windshield = new T.Mesh(new T.PlaneGeometry(0.80, 0.58), matGlass);
+windshield.position.set(0, 1.25, 0.65);
+windshield.rotation.x = -0.22;
+var wsFrame = new T.Mesh(new T.BoxGeometry(0.82, 0.60, 0.03), matCanopyTrim);
+wsFrame.position.set(0, 1.25, 0.64);
+wsFrame.rotation.x = -0.22;
+var wiperMotor = new T.Mesh(new T.CylinderGeometry(0.02, 0.02, 0.04, 6), matBlackMetal);
+wiperMotor.position.set(-0.15, 1.0, 0.72);
+var wiperBlade = new T.Mesh(new T.BoxGeometry(0.02, 0.32, 0.02), matBlackMetal);
+wiperBlade.position.set(-0.06, 1.15, 0.7);
+wiperBlade.rotation.z = -0.65;
+autoBody.add(wsFrame, windshield, wiperMotor, wiperBlade);
+
+// Blue Fabric Canopy
+var canopyGroup = new T.Group();
+var roofTop = new T.Mesh(new T.BoxGeometry(1.04, 0.12, 1.88), matBlueCanopy);
+roofTop.position.set(0, 1.72, -0.24);
+var roofFrontLip = new T.Mesh(new T.CylinderGeometry(0.06, 0.06, 1.04, 8).rotateZ(PI/2), matBlueCanopy);
+roofFrontLip.position.set(0, 1.68, 0.7);
+var roofRearLip = new T.Mesh(new T.CylinderGeometry(0.06, 0.06, 1.04, 8).rotateZ(PI/2), matBlueCanopy);
+roofRearLip.position.set(0, 1.68, -1.18);
+var roofPiping = new T.Mesh(new T.BoxGeometry(1.06, 0.04, 1.9), matCanopyTrim);
+roofPiping.position.set(0, 1.66, -0.24);
+canopyGroup.add(roofTop, roofFrontLip, roofRearLip, roofPiping);
+
+var rearEnclosure = new T.Mesh(new T.PlaneGeometry(0.96, 0.58), matBlueCanopy);
+rearEnclosure.position.set(0, 1.4, -1.14);
+rearEnclosure.rotation.y = PI;
+var rearWindow = new T.Mesh(new T.PlaneGeometry(0.48, 0.26), matGlass);
+rearWindow.position.set(0, 1.42, -1.145);
+rearWindow.rotation.y = PI;
+canopyGroup.add(rearEnclosure, rearWindow);
+
+var sideCurtainMat = new T.MeshStandardMaterial({color: 0x1b6ec7, roughness: 0.9, transparent: true, opacity: 0.9});
+var sideCurtainL = new T.Mesh(new T.PlaneGeometry(0.42, 0.48).rotateY(-PI/2), sideCurtainMat);
+sideCurtainL.position.set(-0.49, 1.42, -0.9);
+var sideWindowL = new T.Mesh(new T.PlaneGeometry(0.24, 0.22).rotateY(-PI/2), matGlass);
+sideWindowL.position.set(-0.492, 1.42, -0.9);
+
+var sideCurtainR = new T.Mesh(new T.PlaneGeometry(0.42, 0.48).rotateY(PI/2), sideCurtainMat);
+sideCurtainR.position.set(0.49, 1.42, -0.9);
+var sideWindowR = new T.Mesh(new T.PlaneGeometry(0.24, 0.22).rotateY(PI/2), matGlass);
+sideWindowR.position.set(0.492, 1.42, -0.9);
+
+canopyGroup.add(sideCurtainL, sideWindowL, sideCurtainR, sideWindowR);
+autoBody.add(canopyGroup);
+
+// Front Steering Fork (One Wheel)
+var frontForkGroup = new T.Group();
+frontForkGroup.position.set(0, 0.27, 1.02);
+
+var frontWheelRot = new T.Group();
+var frontWheelMesh = createWheelMesh();
+frontWheelRot.add(frontWheelMesh);
+frontForkGroup.add(frontWheelRot);
+
+var forkL = new T.Mesh(new T.CylinderGeometry(0.022, 0.022, 0.65, 6), matBlackMetal);forkL.position.set(-0.11, 0.28, 0);
+var forkR = new T.Mesh(new T.CylinderGeometry(0.022, 0.022, 0.65, 6), matBlackMetal);forkR.position.set(0.11, 0.28, 0);
+var forkCrown = new T.Mesh(new T.BoxGeometry(0.26, 0.05, 0.08), matBlackMetal);forkCrown.position.set(0, 0.60, 0);
+frontForkGroup.add(forkL, forkR, forkCrown);
+
+var fMudguardGeo = new T.CylinderGeometry(0.32, 0.32, 0.16, 12, 1, false, 0, PI*0.75).rotateZ(PI/2);
+var fMudguard = new T.Mesh(fMudguardGeo, matCyan);
+fMudguard.position.set(0, 0.08, 0.02);
+frontForkGroup.add(fMudguard);
+
+var steerStem = new T.Mesh(new T.CylinderGeometry(0.025, 0.025, 0.42, 6), matChrome);
+steerStem.position.set(0, 0.78, -0.15);steerStem.rotation.x = -0.45;
+var handlebar = new T.Mesh(new T.CylinderGeometry(0.02, 0.02, 0.58, 8).rotateZ(PI/2), matChrome);
+handlebar.position.set(0, 0.94, -0.28);
+var gripL = new T.Mesh(new T.CylinderGeometry(0.025, 0.025, 0.12, 6).rotateZ(PI/2), matRubber);gripL.position.set(-0.25, 0.94, -0.28);
+var gripR = new T.Mesh(new T.CylinderGeometry(0.025, 0.025, 0.12, 6).rotateZ(PI/2), matRubber);gripR.position.set(0.25, 0.94, -0.28);
+var meterBox = new T.Mesh(new T.BoxGeometry(0.14, 0.08, 0.1), matBlackMetal);meterBox.position.set(0, 0.98, -0.28);
+var meterScreen = new T.Mesh(new T.PlaneGeometry(0.10, 0.05).rotateX(-PI/4), new T.MeshBasicMaterial({color: 0x00e5ff}));
+meterScreen.position.set(0, 1.025, -0.27);
+frontForkGroup.add(steerStem, handlebar, gripL, gripR, meterBox, meterScreen);
+
+var mirrorStalkL = new T.Mesh(new T.CylinderGeometry(0.008, 0.008, 0.22, 4), matChrome);
+mirrorStalkL.position.set(-0.30, 1.05, -0.28);mirrorStalkL.rotation.z = -0.4;
+var mirrorHeadL = new T.Mesh(new T.CylinderGeometry(0.045, 0.045, 0.02, 8).rotateZ(PI/2), matChrome);
+mirrorHeadL.position.set(-0.36, 1.13, -0.28);
+
+var mirrorStalkR = new T.Mesh(new T.CylinderGeometry(0.008, 0.008, 0.22, 4), matChrome);
+mirrorStalkR.position.set(0.30, 1.05, -0.28);mirrorStalkR.rotation.z = 0.4;
+var mirrorHeadR = new T.Mesh(new T.CylinderGeometry(0.045, 0.045, 0.02, 8).rotateZ(PI/2), matChrome);
+mirrorHeadR.position.set(0.36, 1.13, -0.28);
+
+frontForkGroup.add(mirrorStalkL, mirrorHeadL, mirrorStalkR, mirrorHeadR);
+autoBody.add(frontForkGroup);
+
+// Dual Rear Wheels (TWO Wheels)
+var rearAxle = new T.Mesh(new T.CylinderGeometry(0.03, 0.03, 0.98, 6).rotateZ(PI/2), matBlackMetal);
+rearAxle.position.set(0, 0.27, -0.72);
+autoBody.add(rearAxle);
+
+var rearLeftWheelRot = new T.Group();
+rearLeftWheelRot.position.set(-0.52, 0.27, -0.72);
+var rearLeftWheelMesh = createWheelMesh();
+rearLeftWheelRot.add(rearLeftWheelMesh);
+
+var rearRightWheelRot = new T.Group();
+rearRightWheelRot.position.set(0.52, 0.27, -0.72);
+var rearRightWheelMesh = createWheelMesh();
+rearRightWheelRot.add(rearRightWheelMesh);
+
+autoBody.add(rearLeftWheelRot, rearRightWheelRot);
+
+scene.add(car);
+
+var S={x:3.5,z:-400,h:0,v:0,cash:0,mi:0};
+var wheelRotAngle = 0;
+var steerAngle = 0;
+
+/* =========================================================================
+   MISSIONS & GAMEPLAY
+   ========================================================================= */
+var MS=[
+ {t:'Pick up a tourist at',w:'Ghat No. 9',x:10,z:-150},
+ {t:'Drop her at',w:'Nishat Bagh gate',x:-8,z:340,r:2500},
+ {t:'Collect a kahwa order at',w:'Kahwa House',x:-10,z:-20},
+ {t:'Deliver kahwa to',w:'H.B. Golden Lily dock',x:11,z:60,r:1800},
+ {t:'Load saffron crates at',w:'Saffron Sweets',x:-10,z:160},
+ {t:'Rush saffron to',w:'Burger Barn (near Police Checkpoint)',x:0,z:390,r:4000}
+];
+var marker=new T.Group();
+marker.add(new T.Mesh(new T.CylinderGeometry(3.6,3.6,44,20,1,true).translate(0,22,0),new T.MeshBasicMaterial({color:0xffc94d,transparent:true,opacity:0.35,side:T.DoubleSide,depthWrite:false})));
+marker.add(new T.Mesh(new T.RingGeometry(3,3.8,24).rotateX(-PI/2).translate(0,0.3,0),new T.MeshBasicMaterial({color:0xffe08a})));
+scene.add(marker);
+var elMission=document.getElementById('mission'),elCash=document.getElementById('cash'),elSpeed=document.getElementById('speed');
+function setMission(){var m=MS[S.mi];marker.position.set(m.x,0,m.z);}
+setMission();
+
+// Input
+var K={};
+addEventListener('keydown',function(e){K[e.code]=1;if(e.code==='KeyM')toggleMute();if(e.code==='Space')e.preventDefault();});
+addEventListener('keyup',function(e){K[e.code]=0;});
+if('ontouchstart' in window)document.getElementById('pad').style.display='flex';
+Array.prototype.forEach.call(document.querySelectorAll('#pad button'),function(b){
+  var k=b.dataset.k;b.addEventListener('pointerdown',function(e){e.preventDefault();K[k]=1;});
+  ['pointerup','pointerleave','pointercancel'].forEach(function(n){b.addEventListener(n,function(){K[k]=0;});});
+});
+
+/* =========================================================================
+   PROCEDURAL GTA SAN ANDREAS THEME SONG & AUDIO ENGINE
+   ========================================================================= */
+var AC, motorOsc, motorGain, musicGain, muted=false, started=false;
+var noiseBuf = null;
+
+function createNoiseBuffer(ctx){
+  if(noiseBuf)return noiseBuf;
+  var b = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  var o = b.getChannelData(0);
+  for(var i=0;i<b.length;i++) o[i] = Math.random() * 2 - 1;
+  noiseBuf = b;
+  return b;
+}
+
+// Full 4-Bar GTA Theme Sequence (64 sixteenth notes @ 92 BPM)
+var GTA_MUSIC = {
+  tempo: 92,
+  step: 0,
+  nextTime: 0,
+  stepDur: (60 / 92) / 4, // ~0.163s per sixteenth note
+  isPlaying: false,
+
+  // Bass pitches (Hz): G1=49.00, Bb1=58.27, C2=65.41, D2=73.42, Eb2=77.78, F2=87.31
+  // Lead pitches (Hz): G4=392.00, Bb4=466.16, C5=523.25, D5=587.33, Eb5=622.25, F5=698.46, G5=783.99
+  bassSteps: {
+    // Bar 1
+    0: {f:49.00, d:0.45}, 6: {f:49.00, d:0.3}, 10: {f:58.27, d:0.3}, 12: {f:65.41, d:0.3}, 14: {f:73.42, d:0.3},
+    // Bar 2
+    16: {f:49.00, d:0.55}, 22: {f:49.00, d:0.3}, 26: {f:87.31, d:0.3}, 28: {f:73.42, d:0.25}, 30: {f:65.41, d:0.25},
+    // Bar 3
+    32: {f:49.00, d:0.45}, 38: {f:49.00, d:0.3}, 42: {f:58.27, d:0.3}, 44: {f:65.41, d:0.3}, 46: {f:73.42, d:0.3},
+    // Bar 4
+    48: {f:77.78, d:0.45}, 54: {f:73.42, d:0.3}, 58: {f:65.41, d:0.25}, 60: {f:73.42, d:0.25}, 62: {f:87.31, d:0.3}
+  },
+
+  // Iconic G-Funk Whistle Lead Melody
+  leadSteps: {
+    // Bar 1: D5 -> C5 -> Bb4 -> G4 (held)
+    0: {f:587.33, d:0.62}, 6: {f:523.25, d:0.45}, 10: {f:466.16, d:0.28}, 12: {f:392.00, d:1.10},
+    // Bar 2: F5 -> D5 -> C5 -> Bb4
+    22: {f:698.46, d:0.55}, 26: {f:587.33, d:0.40}, 29: {f:523.25, d:0.18}, 30: {f:466.16, d:0.35},
+    // Bar 3: G4 -> D5 -> F5 -> G5 -> F5
+    32: {f:392.00, d:0.50}, 38: {f:587.33, d:0.30}, 40: {f:698.46, d:0.30}, 42: {f:783.99, d:0.60}, 46: {f:698.46, d:0.30},
+    // Bar 4: D5 -> C5 -> Bb4 -> C5 -> D5 -> Bb4 -> G4
+    48: {f:587.33, d:0.28}, 50: {f:523.25, d:0.28}, 52: {f:466.16, d:0.28}, 54: {f:523.25, d:0.28},
+    56: {f:587.33, d:0.55}, 60: {f:466.16, d:0.28}, 62: {f:392.00, d:0.95}
+  },
+
+  // Drums pattern
+  kicks: [0, 6, 10, 16, 22, 26, 30, 32, 38, 42, 48, 54, 58, 60, 62],
+  snares: [4, 12, 20, 28, 36, 44, 52, 60],
+  chords: [2, 6, 10, 14, 18, 22, 26, 30, 34, 38, 42, 46, 50, 54, 58, 62]
+};
+
+function playKick(t){
+  var osc = AC.createOscillator();
+  var g = AC.createGain();
+  osc.frequency.setValueAtTime(145, t);
+  osc.frequency.exponentialRampToValueAtTime(36, t + 0.14);
+  g.gain.setValueAtTime(0.85, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+  osc.connect(g);
+  g.connect(musicGain);
+  osc.start(t);
+  osc.stop(t + 0.3);
+}
+
+function playSnare(t){
+  // White noise snare body
+  var src = AC.createBufferSource();
+  src.buffer = createNoiseBuffer(AC);
+  var f = AC.createBiquadFilter();
+  f.type = 'highpass';
+  f.frequency.setValueAtTime(900, t);
+  var g = AC.createGain();
+  g.gain.setValueAtTime(0.48, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.20);
+  src.connect(f);
+  f.connect(g);
+  g.connect(musicGain);
+  src.start(t);
+  src.stop(t + 0.22);
+
+  // Snare fundamental tone
+  var osc = AC.createOscillator();
+  var tg = AC.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(185, t);
+  osc.frequency.exponentialRampToValueAtTime(75, t + 0.1);
+  tg.gain.setValueAtTime(0.35, t);
+  tg.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+  osc.connect(tg);
+  tg.connect(musicGain);
+  osc.start(t);
+  osc.stop(t + 0.14);
+}
+
+function playHiHat(t, open){
+  var src = AC.createBufferSource();
+  src.buffer = createNoiseBuffer(AC);
+  var f = AC.createBiquadFilter();
+  f.type = 'bandpass';
+  f.frequency.setValueAtTime(8000, t);
+  f.Q.value = 3.2;
+  var g = AC.createGain();
+  var dur = open ? 0.14 : 0.045;
+  g.gain.setValueAtTime(open ? 0.24 : 0.18, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  src.connect(f);
+  f.connect(g);
+  g.connect(musicGain);
+  src.start(t);
+  src.stop(t + dur + 0.01);
+}
+
+function playBass(t, freq, dur){
+  var osc = AC.createOscillator();
+  var sub = AC.createOscillator();
+  var f = AC.createBiquadFilter();
+  var g = AC.createGain();
+
+  osc.type = 'sawtooth';
+  sub.type = 'sine';
+  osc.frequency.setValueAtTime(freq, t);
+  sub.frequency.setValueAtTime(freq, t);
+
+  f.type = 'lowpass';
+  f.frequency.setValueAtTime(500, t);
+  f.frequency.exponentialRampToValueAtTime(140, t + dur * 0.85);
+
+  g.gain.setValueAtTime(0.65, t);
+  g.gain.setValueAtTime(0.55, t + dur * 0.7);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+
+  osc.connect(f);
+  sub.connect(f);
+  f.connect(g);
+  g.connect(musicGain);
+  osc.start(t);
+  sub.start(t);
+  osc.stop(t + dur + 0.05);
+  sub.stop(t + dur + 0.05);
+}
+
+function playLead(t, freq, dur){
+  var osc = AC.createOscillator();
+  var vib = AC.createOscillator();
+  var vibG = AC.createGain();
+  var f = AC.createBiquadFilter();
+  var g = AC.createGain();
+
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(freq, t);
+
+  // G-Funk portamento/vibrato
+  vib.frequency.setValueAtTime(5.8, t);
+  vibG.gain.setValueAtTime(5.5, t);
+  vib.connect(vibG);
+  vibG.connect(osc.frequency);
+  vib.start(t);
+  vib.stop(t + dur + 0.05);
+
+  f.type = 'lowpass';
+  f.frequency.setValueAtTime(1700, t);
+
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.linearRampToValueAtTime(0.28, t + 0.025);
+  g.gain.setValueAtTime(0.25, t + dur * 0.8);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+
+  osc.connect(f);
+  f.connect(g);
+  g.connect(musicGain);
+  osc.start(t);
+  osc.stop(t + dur + 0.05);
+}
+
+function playChord(t, freqs, dur){
+  freqs.forEach(function(freq){
+    var osc = AC.createOscillator();
+    var g = AC.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.075, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.connect(g);
+    g.connect(musicGain);
+    osc.start(t);
+    osc.stop(t + dur + 0.02);
+  });
+}
+
+// Web Audio Clock Lookahead Scheduler for Rock-Solid Tempo
+function scheduleMusic(){
+  if(!GTA_MUSIC.isPlaying) return;
+  var lookahead = 0.12; // 120ms ahead
+  while(GTA_MUSIC.nextTime < AC.currentTime + lookahead){
+    var st = GTA_MUSIC.step;
+    var t = GTA_MUSIC.nextTime;
+
+    // 1. Kick Drum
+    if(GTA_MUSIC.kicks.indexOf(st) !== -1){
+      playKick(t);
+    }
+    // 2. Snare Clap
+    if(GTA_MUSIC.snares.indexOf(st) !== -1){
+      playSnare(t);
+    }
+    // 3. Hi-Hat (8th notes + syncopated rolls)
+    if(st % 2 === 0 || st === 15 || st === 31 || st === 47 || st === 63){
+      playHiHat(t, st % 8 === 4);
+    }
+    // 4. Bassline
+    if(GTA_MUSIC.bassSteps[st]){
+      var bInfo = GTA_MUSIC.bassSteps[st];
+      playBass(t, bInfo.f, bInfo.d);
+    }
+    // 5. G-Funk Whistle Lead
+    if(GTA_MUSIC.leadSteps[st]){
+      var lInfo = GTA_MUSIC.leadSteps[st];
+      playLead(t, lInfo.f, lInfo.d);
+    }
+    // 6. Funk Chords (G-minor / F-major stabs)
+    if(GTA_MUSIC.chords.indexOf(st) !== -1){
+      var chordFreqs = (st >= 48 && st < 56) ? [196, 246.94, 293.66] : [196, 233.08, 293.66]; // G-minor
+      playChord(t, chordFreqs, 0.12);
+    }
+
+    GTA_MUSIC.nextTime += GTA_MUSIC.stepDur;
+    GTA_MUSIC.step = (GTA_MUSIC.step + 1) % 64;
+  }
+}
+
+function showRadioToast(title){
+  var el = document.getElementById('radio-toast');
+  el.textContent = title;
+  el.classList.add('show');
+  setTimeout(function(){ el.classList.remove('show'); }, 3800);
+}
+
+function initAudio(){
+  try{
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    createNoiseBuffer(AC);
+
+    // Motor sound
+    motorOsc = AC.createOscillator();
+    motorOsc.type = 'triangle';
+    var f = AC.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 650;
+    motorGain = AC.createGain();
+    motorGain.gain.value = 0.035;
+    motorOsc.connect(f);
+    f.connect(motorGain);
+    motorGain.connect(AC.destination);
+    motorOsc.start();
+
+    // Music gain
+    musicGain = AC.createGain();
+    musicGain.gain.value = 0.38;
+    musicGain.connect(AC.destination);
+
+    // Start GTA theme song sequencer
+    GTA_MUSIC.isPlaying = true;
+    GTA_MUSIC.nextTime = AC.currentTime + 0.1;
+    setInterval(scheduleMusic, 45);
+
+    showRadioToast('📻 RADIO LOS SANTOS • GTA Theme Song');
+  }catch(e){}
+}
+
+function toggleMute(){
+  muted = !muted;
+  if(motorGain) motorGain.gain.value = muted ? 0 : 0.035;
+  if(musicGain) musicGain.gain.value = muted ? 0 : 0.38;
+  document.getElementById('mute').textContent = muted ? '🔇 Radio: MUTED' : '📻 GTA Radio: ON';
+  if(!muted) showRadioToast('📻 RADIO LOS SANTOS • GTA Theme Song');
+}
+document.getElementById('mute').addEventListener('click', toggleMute);
+document.getElementById('start').addEventListener('click', function(){
+  document.getElementById('title').style.display='none';
+  started=true;
+  initAudio();
+});
+
+/* =========================================================================
+   MOVABLE REAL KASHMIR SCENERY CONTROLLER
+   ========================================================================= */
+var SCENERY_LIST=[
+  {
+    title: '📍 Dal Lake Luxury Houseboats & Shikaras',
+    url: 'https://images.unsplash.com/photo-1566837945700-30057527ade0?auto=format&fit=crop&w=700&q=80'
+  },
+  {
+    title: '📍 Dal Lake Shikara & Zabarwan Ridge',
+    url: 'https://images.unsplash.com/photo-1598091383021-15ddea10925d?auto=format&fit=crop&w=700&q=80'
+  },
+  {
+    title: '📍 Mount Mahadev & Zabarwan Range',
+    url: 'https://images.unsplash.com/photo-1609137144813-7d9921338f24?auto=format&fit=crop&w=700&q=80'
+  },
+  {
+    title: '📍 Boulevard Road Lakeside Promenade',
+    url: 'https://images.unsplash.com/photo-1595815771614-ade9d652a65d?auto=format&fit=crop&w=700&q=80'
+  }
+];
+
+var sceneryIdx=0;
+var widgetEl=document.getElementById('scenery-widget');
+var imgEl=document.getElementById('scenery-img');
+var tagEl=document.getElementById('scenery-tag');
+var frameEl=document.getElementById('scenery-frame');
+var isMinimized=false;
+
+function makeFallbackScenery(){
+  var c=document.createElement('canvas');c.width=400;c.height=240;var cx=c.getContext('2d');
+  var g=cx.createLinearGradient(0,0,0,240);g.addColorStop(0,'#1a547a');g.addColorStop(0.5,'#7eb3d4');g.addColorStop(0.7,'#236b66');g.addColorStop(1,'#0f3330');
+  cx.fillStyle=g;cx.fillRect(0,0,400,240);
+  cx.fillStyle='#fff';cx.beginPath();cx.arc(310,50,22,0,Math.PI*2);cx.fill();
+  cx.fillStyle='#435c6e';cx.beginPath();cx.moveTo(40,160);cx.lineTo(130,70);cx.lineTo(240,160);cx.fill();
+  cx.fillStyle='#5b768a';cx.beginPath();cx.moveTo(170,160);cx.lineTo(280,60);cx.lineTo(390,160);cx.fill();
+  cx.fillStyle='#ffffff';cx.beginPath();cx.moveTo(130,70);cx.lineTo(110,95);cx.lineTo(150,95);cx.fill();
+  cx.beginPath();cx.moveTo(280,60);cx.lineTo(255,90);cx.lineTo(305,90);cx.fill();
+  cx.fillStyle='#b8432f';cx.fillRect(90,185,55,14);
+  cx.fillStyle='#e8a33d';cx.fillRect(100,172,35,13);
+  return c.toDataURL();
+}
+
+function updateSceneryView(idx){
+  sceneryIdx=(idx+SCENERY_LIST.length)%SCENERY_LIST.length;
+  var item=SCENERY_LIST[sceneryIdx];
+  tagEl.textContent=item.title;
+  imgEl.onerror=function(){imgEl.src=makeFallbackScenery();};
+  imgEl.src=item.url;
+}
+updateSceneryView(0);
+
+document.getElementById('scenery-next').addEventListener('click',function(e){e.stopPropagation();updateSceneryView(sceneryIdx+1);});
+document.getElementById('scenery-prev').addEventListener('click',function(e){e.stopPropagation();updateSceneryView(sceneryIdx-1);});
+document.getElementById('scenery-toggle').addEventListener('click',function(e){
+  e.stopPropagation();
+  isMinimized=!isMinimized;
+  frameEl.style.display=isMinimized?'none':'block';
+  this.textContent=isMinimized?'+':'−';
+});
+
+(function initDraggableWidget(){
+  var isDragging=false,startX=0,startY=0,initialLeft=0,initialTop=0;
+  function onPointerDown(e){
+    if(e.target.tagName==='BUTTON')return;
+    isDragging=true;
+    startX=e.clientX||(e.touches&&e.touches[0].clientX)||0;
+    startY=e.clientY||(e.touches&&e.touches[0].clientY)||0;
+    var rect=widgetEl.getBoundingClientRect();
+    initialLeft=rect.left;initialTop=rect.top;
+    window.addEventListener('pointermove',onPointerMove);
+    window.addEventListener('pointerup',onPointerUp);
+    window.addEventListener('pointercancel',onPointerUp);
+  }
+  function onPointerMove(e){
+    if(!isDragging)return;
+    var curX=e.clientX||(e.touches&&e.touches[0].clientX)||0;
+    var curY=e.clientY||(e.touches&&e.touches[0].clientY)||0;
+    var nx=initialLeft+(curX-startX);
+    var ny=initialTop+(curY-startY);
+    nx=Math.max(10,Math.min(window.innerWidth-widgetEl.offsetWidth-10,nx));
+    ny=Math.max(10,Math.min(window.innerHeight-widgetEl.offsetHeight-10,ny));
+    widgetEl.style.left=nx+'px';widgetEl.style.top=ny+'px';
+  }
+  function onPointerUp(){
+    isDragging=false;
+    window.removeEventListener('pointermove',onPointerMove);
+    window.removeEventListener('pointerup',onPointerUp);
+    window.removeEventListener('pointercancel',onPointerUp);
+  }
+  widgetEl.addEventListener('pointerdown',onPointerDown);
+})();
+
+// Minimap
+var mc=document.getElementById('map').getContext('2d');
+function drawMap(){
+  var s=0.8,cx=80,cy=64;
+  function mx(x){return cx-(x-S.x)*s}
+  function my(z){return cy-(z-S.z)*s}
+  mc.clearRect(0,0,160,128);
+  mc.fillStyle='#6e5240';mc.fillRect(mx(-26),0,200,128);
+  mc.fillStyle='#7d8182';mc.fillRect(mx(-7),0,19*s,128);
+  mc.fillStyle='#393c40';mc.fillRect(mx(7),0,14*s,128);
+  mc.fillStyle='#b8aa8d';mc.fillRect(mx(17),0,10*s,128);
+  mc.fillStyle='#206d6b';mc.fillRect(-200,0,mx(18)+200,128);
+
+  // Checkpoint on Minimap (Red hazard line)
+  var cpy=my(CHECKPOINT_Z);
+  if(cpy>=0&&cpy<=128){
+    mc.fillStyle='#d32f2f';mc.fillRect(mx(-24),cpy-2,42*s,4);
+  }
+
+  // Houseboats on Minimap
+  mc.fillStyle='#d4af37';
+  HB_LIST.forEach(function(h){
+    var hx=mx(h.x),hy=my(h.z);
+    if(hx>-10&&hx<170&&hy>-10&&hy<140){
+      mc.fillRect(hx-3,hy-6,6,12);
+    }
+  });
+
+  var m=MS[S.mi],px=Math.max(7,Math.min(153,mx(m.x))),py=Math.max(7,Math.min(121,my(m.z)));
+  mc.fillStyle='#ffc94d';mc.beginPath();mc.arc(px,py,5,0,PI*2);mc.fill();
+  
+  // Player 3-Wheeler Auto (Cyan Arrow)
+  mc.save();mc.translate(cx,cy);mc.rotate(-S.h);
+  mc.fillStyle='#3ac2de';
+  mc.beginPath();mc.moveTo(0,-7);mc.lineTo(4,5);mc.lineTo(-4,5);mc.closePath();mc.fill();
+  mc.restore();
+}
+
+function resize(){renderer.setSize(innerWidth,innerHeight,false);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();}
+addEventListener('resize',resize);resize();
+
+/* =========================================================================
+   ANIMATION & GAME LOOP WITH 3-WHEELER SIMULATION
+   ========================================================================= */
+var last=performance.now(),t=0,slow=0;
+function frame(now){
+  requestAnimationFrame(frame);
+  var dt=Math.min((now-last)/1000,0.05);last=now;t+=dt;
+  if(dt>0.03){slow++;if(slow>90&&renderer.getPixelRatio()>1){renderer.setPixelRatio(1);resize();}}else if(slow>0)slow--;
+
+  if(started){
+    var up=K.ArrowUp||K.KeyW,dn=K.ArrowDown||K.KeyS,lf=K.ArrowLeft||K.KeyA,rt=K.ArrowRight||K.KeyD;
+    var maxV=Math.abs(S.x)<8.5?32:16;
+    if(up)S.v+=24*dt;if(dn)S.v-=(S.v>0?34:16)*dt;
+    if(K.Space)S.v-=Math.sign(S.v)*Math.min(Math.abs(S.v),42*dt);
+    S.v*=1-0.45*dt;if(!up&&!dn)S.v*=1-0.65*dt;
+    S.v=Math.max(-10,Math.min(maxV,S.v));
+    S.h+=((lf?1:0)-(rt?1:0))*dt*2.1*Math.max(-1,Math.min(1,S.v/6.5));
+    S.x+=Math.sin(S.h)*S.v*dt;S.z+=Math.cos(S.h)*S.v*dt;
+
+    // Lateral street boundaries
+    if(S.x>15){S.x=15;S.v*=0.7;}if(S.x<-23){S.x=-23;S.v*=0.7;}
+
+    // Southern road boundary
+    if(S.z<-ZL+1.6){S.z=-ZL+1.6;if(S.v<0)S.v=-S.v*0.35;}
+
+    // BARRICADE & CHECKPOINT COLLISION AT BURGER BARN (z = 413)
+    var BARRICADE_HIT_Z=CHECKPOINT_Z-1.6;
+    if(S.z>=BARRICADE_HIT_Z && S.x>=-24 && S.x<=18){
+      S.z=BARRICADE_HIT_Z;
+      if(S.v>0){
+        S.v=-S.v*0.4; // Firm rebound thud
+      }
+    }
+
+    // Police Cabin structure box collision
+    if(S.x>-17 && S.x<-12 && S.z>406 && S.z<415){
+      if(S.x<-14.5)S.x=-17;else S.x=-12;
+      S.v*=0.5;
+    }
+
+    var m=MS[S.mi];
+    if(Math.hypot(S.x-m.x,S.z-m.z)<7){if(m.r)S.cash+=m.r;S.mi=(S.mi+1)%MS.length;setMission();m=MS[S.mi];}
+    elMission.innerHTML=m.t+' <b>'+m.w+'</b><small>'+Math.round(Math.hypot(S.x-m.x,S.z-m.z))+' m away</small>';
+    elCash.textContent='₹'+S.cash.toLocaleString('en-IN');
+    elSpeed.innerHTML=Math.round(Math.abs(S.v)*3.6)+' <small>km/h</small>';
+    
+    // Electric motor whine pitch
+    if(motorOsc) motorOsc.frequency.value = 55 + Math.abs(S.v) * 9.5;
+    drawMap();
+
+    // Movable scenery parallax shift
+    if(!isMinimized){
+      var panX=Math.sin(S.z*0.015)*18+(S.v*0.3);
+      imgEl.style.transform='translateX('+panX+'px) scale(1.04)';
+    }
+
+    // --- 3-WHEELER MECHANICAL ANIMATIONS ---
+    // 1. Wheel Rotation (All 3 Wheels)
+    wheelRotAngle += (S.v / R_WHEEL) * dt;
+    frontWheelRot.rotation.x = wheelRotAngle;
+    rearLeftWheelRot.rotation.x = wheelRotAngle;
+    rearRightWheelRot.rotation.x = wheelRotAngle;
+
+    // 2. Front Fork Steering (Front Wheel Turns Left/Right)
+    var steerTarget = (lf ? 0.45 : 0) - (rt ? 0.45 : 0);
+    steerAngle += (steerTarget - steerAngle) * Math.min(1, 14 * dt);
+    frontForkGroup.rotation.y = steerAngle;
+
+    // 3. Body Roll (Leaning into turns) & Pitch (Suspension squat)
+    var bodyRoll = -steerAngle * (S.v * 0.016);
+    var bodyPitch = Math.sin(t * 22) * 0.008 * (Math.abs(S.v) / 15) - (S.v * 0.003);
+    autoBody.rotation.z = bodyRoll;
+    autoBody.rotation.x = bodyPitch;
+  }
+
+  // Vehicle position & heading on road
+  car.position.set(S.x, 0.04 + Math.sin(t*30)*0.006*Math.abs(S.v)/10, S.z);
+  car.rotation.y = S.h;
+
+  // Chase Camera (Optimized for compact electric 3-wheeler)
+  var fx=Math.sin(S.h), fz=Math.cos(S.h);
+  var camDist = 9.8, camH = 4.8;
+  var tx = S.x - fx * camDist;
+  var tz = S.z - fz * camDist;
+  var ty = camH;
+  var k = 1 - Math.exp(-4.5 * dt);
+  if(!started){var a=t*0.12;tx=S.x+Math.cos(a)*25;tz=S.z+Math.sin(a)*25+8;ty=7;k=1;}
+  cam.position.x += (tx - cam.position.x) * k;
+  cam.position.y += (ty - cam.position.y) * k;
+  cam.position.z += (tz - cam.position.z) * k;
+  cam.lookAt(S.x + fx * 3.5, 1.5, S.z + fz * 3.5);
+
+  // Dal Lake water color shimmer
+  waterMat.color.setHSL(0.49,0.5,0.30+Math.sin(t*0.8)*0.02);
+
+  // Checkpoint Amber Hazard Strobe
+  var flashOn=(Math.sin(t*10)>0.1);
+  amberLights.forEach(function(l){
+    l.material.color.setHex(flashOn?0xffaa00:0x332200);
+  });
+
+  // Kashmiri Houseboats gentle lake bobbing & rocking
+  HB_LIST.forEach(function(hb,i){
+    var wave=Math.sin(t*1.2+i*1.1)*0.045;
+    var pitch=Math.sin(t*0.85+i*0.9)*0.008;
+    var roll=Math.cos(t*1.05+i*0.7)*0.012;
+    hb.group.position.y=hb.baseY+wave;
+    hb.group.rotation.x=pitch;
+    hb.group.rotation.z=roll;
+  });
+
+  // Canopied & Flower Shikaras gentle cruising and bobbing
+  SHIKARA_LIST.forEach(function(sh,i){
+    if(!sh.isFlower){
+      sh.group.position.z+=sh.dir*sh.sp*dt;
+      if(sh.group.position.z>ZL)sh.group.position.z=-ZL;
+      if(sh.group.position.z<-ZL)sh.group.position.z=ZL;
+    }
+    sh.group.position.y=0.1+Math.sin(t*1.8+i)*0.04;
+    sh.group.rotation.z=Math.sin(t*1.5+i)*0.02;
+  });
+
+  marker.children[0].material.opacity=0.28+Math.sin(t*4)*0.08;
+  renderer.render(scene,cam);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

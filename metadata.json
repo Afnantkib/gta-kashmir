@@ -1,0 +1,8 @@
+{
+  "name": "GTA Kashmir: Srinagar Boulevard",
+  "description": "A multiplayer-first 3D open-world vehicular action game set along Srinagar's Boulevard Road and Dal Lake. Drive cars, bikes, taxis and electric autos, complete missions, and race.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

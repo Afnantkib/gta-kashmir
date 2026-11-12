@@ -1,0 +1,384 @@
+export type VehicleCategory = 'auto' | 'taxi' | 'police' | 'bike';
+
+export interface VehiclePhysicsConfig {
+  id: VehicleCategory;
+  name: string;
+  categoryName: string;
+  mass: number; // kg
+  maxSpeed: number; // m/s (multiply by 3.6 for km/h)
+  acceleration: number; // m/s^2
+  reverseSpeed: number; // m/s
+  brakeForce: number; // m/s^2
+  turnSpeed: number; // rad/s base steering sensitivity
+  wheelBase: number; // meters
+  wheelRadius: number; // meters
+  rollFactor: number; // visual body roll/lean
+  description: string;
+  audioKey: 'electric' | 'engine' | 'cruiser' | 'motorcycle';
+  baseColor: number;
+}
+
+export const VEHICLE_CONFIGS: Record<VehicleCategory, VehiclePhysicsConfig> = {
+  auto: {
+    id: 'auto',
+    name: 'Electric Battery Auto (Supercharged)',
+    categoryName: '3-Wheel E-Rickshaw',
+    mass: 420,
+    maxSpeed: 41.7, // ~150 km/h hyper e-rickshaw
+    acceleration: 14.5,
+    reverseSpeed: 10.0,
+    brakeForce: 24.0,
+    turnSpeed: 2.8,
+    wheelBase: 1.8,
+    wheelRadius: 0.27,
+    rollFactor: 0.028,
+    description: 'Supercharged 3-wheel electric battery auto with hyper-inverter boost and nitro response.',
+    audioKey: 'electric',
+    baseColor: 0x3ac2de,
+  },
+  taxi: {
+    id: 'taxi',
+    name: 'Kashmir Ambassador Taxi (Turbo V8)',
+    categoryName: 'Heritage Sedan Taxi',
+    mass: 1280,
+    maxSpeed: 52.8, // ~190 km/h
+    acceleration: 16.8,
+    reverseSpeed: 12.0,
+    brakeForce: 26.0,
+    turnSpeed: 2.2,
+    wheelBase: 2.5,
+    wheelRadius: 0.32,
+    rollFactor: 0.015,
+    description: 'Tuned Kashmir Ambassador sedan with twin-turbo engine. Blasts down Boulevard Road at 190 km/h.',
+    audioKey: 'engine',
+    baseColor: 0xf4f1ea,
+  },
+  police: {
+    id: 'police',
+    name: 'J&K Police Interceptor (200 KM/H)',
+    categoryName: 'Police Cruiser',
+    mass: 1550,
+    maxSpeed: 55.6, // 200.16 km/h (exact 200 km/h top speed!)
+    acceleration: 22.5,
+    reverseSpeed: 16.0,
+    brakeForce: 32.0,
+    turnSpeed: 2.5,
+    wheelBase: 2.7,
+    wheelRadius: 0.34,
+    rollFactor: 0.010,
+    description: 'State-of-the-art pursuit interceptor calibrated to 200 km/h with siren and emergency strobe arrays.',
+    audioKey: 'cruiser',
+    baseColor: 0x11161d,
+  },
+  bike: {
+    id: 'bike',
+    name: 'Royal Enfield Bullet 350 (200 KM/H Super-Thump)',
+    categoryName: 'Classic Motorcycle',
+    mass: 195,
+    maxSpeed: 55.6, // 200.16 km/h (exact 200 km/h top speed!)
+    acceleration: 25.0,
+    reverseSpeed: 8.0,
+    brakeForce: 30.0,
+    turnSpeed: 3.2,
+    wheelBase: 1.4,
+    wheelRadius: 0.33,
+    rollFactor: 0.052,
+    description: 'Custom bored-out Bullet 350 superbike capable of 200 km/h with deep racing exhaust and steep bank angles.',
+    audioKey: 'motorcycle',
+    baseColor: 0x1a1a1a,
+  },
+};
+
+// Spatial & Road Constants
+export const ROAD_BOUNDS = {
+  MIN_X: -26.0, // Physical hotel building walls & Nishat Bagh gate (West)
+  MAX_X: 17.2,  // Promenade deodar railing wall along Dal Lake (East)
+  MIN_Z: -430.0, // Dalgate boundary wall (South)
+  MAX_Z: 411.4,  // Checkpoint barrier wall at Burger Barn (North)
+  CHECKPOINT_Z: 413.0,
+};
+
+export interface PlayerInputPacket {
+  seq: number;
+  steer: number; // -1 to 1 (left to right)
+  throttle: number; // 0 to 1
+  brake: number; // 0 to 1 (or reverse)
+  handbrake: boolean;
+  vehicleType: VehicleCategory;
+  clientTime: number;
+}
+
+export interface PlayerServerState {
+  id: string;
+  name: string;
+  vehicle: VehicleCategory;
+  x: number;
+  y: number;
+  z: number;
+  heading: number; // radians
+  speed: number; // m/s
+  steerAngle: number;
+  lastAckSeq: number;
+  color?: number;
+  wantedLevel: number;
+  inPursuit: boolean;
+  mode?: GameMode;
+  combat?: PlayerCombatState;
+}
+
+export type GameMode = 'free_roam' | 'battle_arena';
+
+export type WeaponType =
+  | 'rocket'
+  | 'grenade'
+  | 'firecracker'
+  | 'emp'
+  | 'oil'
+  | 'spike'
+  | 'machinegun'
+  | 'homing';
+
+export interface WeaponDefinition {
+  id: WeaponType;
+  name: string;
+  categoryName: string;
+  description: string;
+  icon: string;
+  damage: number;
+  splashDamage: number;
+  splashRadius: number; // meters
+  projectileSpeed: number; // m/s
+  cooldownMs: number;
+  ammo: number;
+  dropProbability: number; // percentage (sums to 100)
+}
+
+export const WEAPON_CONFIGS: Record<WeaponType, WeaponDefinition> = {
+  machinegun: {
+    id: 'machinegun',
+    name: 'Dal Machine Gun',
+    categoryName: 'Rapid Fire',
+    description: 'Fires a high-velocity stream of 15 bullets. Low damage per bullet but relentless continuous pressure.',
+    icon: '🔫',
+    damage: 8,
+    splashDamage: 0,
+    splashRadius: 0,
+    projectileSpeed: 95.0,
+    cooldownMs: 120,
+    ammo: 18,
+    dropProbability: 20,
+  },
+  rocket: {
+    id: 'rocket',
+    name: 'Boulevard Rocket Launcher',
+    categoryName: 'Heavy Explosive',
+    description: 'Fires a fast rocket straight ahead. Explodes on impact with heavy direct and splash damage.',
+    icon: '🚀',
+    damage: 35,
+    splashDamage: 20,
+    splashRadius: 7.5,
+    projectileSpeed: 48.0,
+    cooldownMs: 900,
+    ammo: 3,
+    dropProbability: 15,
+  },
+  grenade: {
+    id: 'grenade',
+    name: 'Zabarwan Grenade Launcher',
+    categoryName: 'Lobbed Explosive',
+    description: 'Launches bouncing grenades in an arc trajectory that detonate on contact or timed fuse.',
+    icon: '💣',
+    damage: 30,
+    splashDamage: 25,
+    splashRadius: 6.5,
+    projectileSpeed: 30.0,
+    cooldownMs: 800,
+    ammo: 4,
+    dropProbability: 15,
+  },
+  oil: {
+    id: 'oil',
+    name: 'Slick Mustard Oil Trap',
+    categoryName: 'Hazard / Area Denial',
+    description: 'Drops a slick oil puddle behind your vehicle. Opponents lose traction and spin out for 2.5s.',
+    icon: '🛢️',
+    damage: 0,
+    splashDamage: 0,
+    splashRadius: 3.2,
+    projectileSpeed: 0,
+    cooldownMs: 600,
+    ammo: 3,
+    dropProbability: 15,
+  },
+  emp: {
+    id: 'emp',
+    name: 'Kashmir EMP Shockwave',
+    categoryName: 'Tactical Disabler',
+    description: 'Discharges an electric EMP dome in a 14m radius, temporarily cutting opponents steering & engine.',
+    icon: '⚡',
+    damage: 0,
+    splashDamage: 0,
+    splashRadius: 14.0,
+    projectileSpeed: 0,
+    cooldownMs: 1200,
+    ammo: 1,
+    dropProbability: 12,
+  },
+  spike: {
+    id: 'spike',
+    name: 'Steel Spike Strip',
+    categoryName: 'Tire Hazard',
+    description: 'Deploys a row of jagged caltrops behind vehicle. Deals 10 damage and halves opponent speed for 3s.',
+    icon: '⚠️',
+    damage: 10,
+    splashDamage: 0,
+    splashRadius: 2.8,
+    projectileSpeed: 0,
+    cooldownMs: 700,
+    ammo: 2,
+    dropProbability: 10,
+  },
+  firecracker: {
+    id: 'firecracker',
+    name: 'Kashmir Firecracker Barrage',
+    categoryName: 'Spread Rockets',
+    description: 'Launches a chaotic 5-rocket fan spread that blankets the roadway in fiery sparks.',
+    icon: '🎆',
+    damage: 8,
+    splashDamage: 6,
+    splashRadius: 3.5,
+    projectileSpeed: 42.0,
+    cooldownMs: 750,
+    ammo: 4,
+    dropProbability: 8,
+  },
+  homing: {
+    id: 'homing',
+    name: 'Shikara-Seeking Missile',
+    categoryName: 'Homing Ordnance',
+    description: 'Locks onto nearest visible opponent in forward cone and relentlessly pursues them. 40 damage.',
+    icon: '🎯',
+    damage: 40,
+    splashDamage: 22,
+    splashRadius: 8.0,
+    projectileSpeed: 40.0,
+    cooldownMs: 1500,
+    ammo: 2,
+    dropProbability: 5,
+  },
+};
+
+// Battle Arena Spatial Bounds (Dedicated Dal Lake Mayhem Arena Zone)
+export const ARENA_BOUNDS = {
+  MIN_X: -32.0, // Western pavilion and spectator grandstand wall
+  MAX_X: 20.0,  // Eastern Dal Lake illuminated battle perimeter
+  MIN_Z: -430.0, // Southern Dalgate boundary wall (fully open past Wazwan Darbar Hotel)
+  MAX_Z: 411.4,  // Northern Checkpoint barrier wall at Burger Barn
+};
+
+export const ARENA_SPAWNS = [
+  { x: -18.0, z: -140.0, heading: 0 },
+  { x: 10.0, z: -140.0, heading: 0 },
+  { x: -22.0, z: -80.0, heading: 0 },
+  { x: 12.0, z: -80.0, heading: Math.PI },
+  { x: -16.0, z: -20.0, heading: Math.PI },
+  { x: 8.0, z: -20.0, heading: Math.PI },
+  { x: -5.0, z: -60.0, heading: 0 },
+  { x: 0.0, z: -110.0, heading: Math.PI },
+];
+
+export const CRATE_SPAWN_LOCATIONS = [
+  { id: 'crate_1', x: -16.0, z: -120.0 },
+  { id: 'crate_2', x: 8.0, z: -110.0 },
+  { id: 'crate_3', x: -6.0, z: -75.0 },
+  { id: 'crate_4', x: 2.0, z: -45.0 },
+  { id: 'crate_5', x: -20.0, z: -40.0 },
+  { id: 'crate_6', x: 10.0, z: -15.0 },
+  { id: 'crate_7', x: -12.0, z: 5.0 },
+];
+
+export interface ArenaCrateState {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  active: boolean;
+  respawnTimer: number; // seconds remaining until respawn
+}
+
+export interface ArenaProjectileState {
+  id: string;
+  weaponType: WeaponType;
+  ownerId: string;
+  ownerName: string;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  heading: number;
+  targetId?: string; // For homing missile
+  spawnTime: number;
+  lifeTimeSec: number;
+}
+
+export interface ArenaHazardState {
+  id: string;
+  type: 'oil' | 'spike';
+  ownerId: string;
+  x: number;
+  z: number;
+  heading: number;
+  expiresAt: number; // epoch ms
+}
+
+export interface PlayerCombatState {
+  health: number; // 0 - 100
+  maxHealth: number; // 100
+  shield: number; // 0 - 50 bonus absorption
+  weapon: WeaponType | null;
+  ammo: number;
+  kills: number;
+  damageDealt: number;
+  isAlive: boolean;
+  invulnerableUntil: number; // epoch ms
+  empUntil: number; // epoch ms
+  oilUntil: number; // epoch ms
+  speedPenaltyUntil: number; // epoch ms
+  boostUntil: number; // epoch ms
+  boostCooldownUntil: number; // epoch ms
+  dodgeCooldownUntil: number; // epoch ms
+}
+
+export interface DamageEvent {
+  id: string;
+  attackerId: string;
+  attackerName: string;
+  victimId: string;
+  victimName: string;
+  amount: number;
+  weaponType: WeaponType;
+  x: number;
+  y: number;
+  z: number;
+  isElimination: boolean;
+  timestamp: number;
+}
+
+export interface ArenaMatchState {
+  state: 'waiting' | 'countdown' | 'active' | 'finished';
+  timerSec: number;
+  totalPlayers: number;
+  playersAlive: number;
+  winnerId?: string;
+  winnerName?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+}
