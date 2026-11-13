@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { ROAD_BOUNDS } from '../shared/types.ts';
 
 export interface WorldObjects {
   scene: THREE.Scene;
@@ -7,6 +8,7 @@ export interface WorldObjects {
   amberLights: THREE.Mesh[];
   waterMaterial: THREE.MeshLambertMaterial;
   barrierHitZ: number;
+  southBarrierHitZ: number;
   nishatFountains: { mesh: THREE.Mesh; baseH: number; phase: number }[];
 }
 
@@ -662,35 +664,289 @@ export function buildSrinagarWorld(scene: THREE.Scene): WorldObjects {
 
   scene.add(nishatGroup);
 
-  // 5. Checkpoint Barrier at Burger Barn Road End (z = 413)
-  const CHECKPOINT_Z = 413;
+  // 5. JK Police checkpoints at both Boulevard Road endings
+  // North: Burger Barn (z = 413). South: Dalgate (z = -430).
+  const NORTH_CHECKPOINT_Z = ROAD_BOUNDS.CHECKPOINT_Z;
+  const SOUTH_CHECKPOINT_Z = ROAD_BOUNDS.SOUTH_CHECKPOINT_Z;
   const amberLights: THREE.Mesh[] = [];
 
-  const cp = new THREE.Group();
-  for (let x = -23; x <= 17; x += 4.4) {
-    const jb = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.2, 0.9), mat(0x9e9d99));
-    jb.position.set(x, 0.6, CHECKPOINT_Z);
-    cp.add(jb);
+  function canvasTex(draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void, w: number, h: number) {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    draw(c.getContext('2d')!, w, h);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
   }
 
-  // Gantry beam with Police warning banner
-  const gantryMat = mat(0x283238);
-  const pL = new THREE.Mesh(new THREE.BoxGeometry(0.4, 6.2, 0.4), gantryMat);
-  pL.position.set(-8.5, 3.1, CHECKPOINT_Z);
-  const pR = new THREE.Mesh(new THREE.BoxGeometry(0.4, 6.2, 0.4), gantryMat);
-  pR.position.set(8.5, 3.1, CHECKPOINT_Z);
-  const beam = new THREE.Mesh(new THREE.BoxGeometry(17.4, 0.4, 0.4), gantryMat);
-  beam.position.set(0, 6.0, CHECKPOINT_Z);
-  cp.add(pL, pR, beam);
+  function makeJerseyTex() {
+    const tex = canvasTex((cx, w, h) => {
+      cx.fillStyle = '#9e9d99';
+      cx.fillRect(0, 0, w, h);
+      cx.fillStyle = '#ffb700';
+      cx.fillRect(0, 40, w, 50);
+      cx.fillStyle = '#1c1b18';
+      for (let i = -100; i < 350; i += 40) {
+        cx.beginPath();
+        cx.moveTo(i, 40);
+        cx.lineTo(i + 25, 40);
+        cx.lineTo(i - 10, 90);
+        cx.lineTo(i - 35, 90);
+        cx.closePath();
+        cx.fill();
+      }
+    }, 256, 128);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    return tex;
+  }
 
-  const amberMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
-  [-8.5, -3.5, 3.5, 8.5].forEach(lx => {
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), amberMat);
-    bulb.position.set(lx, 6.4, CHECKPOINT_Z);
-    cp.add(bulb);
-    amberLights.push(bulb);
+  function makePoliceBannerTex(subtitle: string) {
+    return canvasTex((cx, w, h) => {
+      cx.fillStyle = '#0f2038';
+      cx.fillRect(0, 0, w, h);
+      cx.fillStyle = '#a81919';
+      cx.fillRect(0, 0, w, 24);
+      cx.fillRect(0, h - 24, w, 24);
+      cx.strokeStyle = '#d4af37';
+      cx.lineWidth = 4;
+      cx.strokeRect(6, 6, w - 12, h - 12);
+      cx.textAlign = 'center';
+      cx.fillStyle = '#ffea75';
+      cx.font = 'bold 22px Arial, sans-serif';
+      cx.fillText('JAMMU & KASHMIR POLICE', w / 2, 48);
+      cx.fillStyle = '#ffffff';
+      cx.font = 'bold 26px Arial, sans-serif';
+      cx.fillText('CHECK POST — ALL VEHICLES STOP', w / 2, 84);
+      cx.fillStyle = '#ffc107';
+      cx.font = 'bold 14px Arial, sans-serif';
+      cx.fillText(subtitle, w / 2, 110);
+    }, 512, 140);
+  }
+
+  function makeRoadClosedSignTex() {
+    return canvasTex((cx, w, h) => {
+      cx.fillStyle = '#ffcc00';
+      cx.fillRect(0, 0, w, h);
+      cx.fillStyle = '#d32f2f';
+      for (let i = 0; i < w; i += 28) {
+        cx.fillRect(i, 0, 14, 14);
+        cx.fillRect(i, h - 14, 14, 14);
+      }
+      cx.strokeStyle = '#b71c1c';
+      cx.lineWidth = 6;
+      cx.strokeRect(6, 6, w - 12, h - 12);
+      cx.textAlign = 'center';
+      cx.fillStyle = '#b71c1c';
+      cx.font = '900 32px Arial, sans-serif';
+      cx.fillText('ROAD CLOSED', w / 2, 48);
+      cx.fillStyle = '#111111';
+      cx.font = 'bold 21px Arial, sans-serif';
+      cx.fillText('NO VEHICLE ENTRY BEYOND THIS POINT', w / 2, 84);
+      cx.fillStyle = '#b71c1c';
+      cx.font = 'bold 15px Arial, sans-serif';
+      cx.fillText('✦ TRESPASSERS WILL BE PROSECUTED ✦', w / 2, 110);
+    }, 512, 140);
+  }
+
+  function makeMetalBarricadeTex() {
+    return canvasTex((cx, w, h) => {
+      cx.fillStyle = '#e0e0e0';
+      cx.fillRect(0, 0, w, h);
+      cx.fillStyle = '#d32f2f';
+      for (let i = -50; i < 300; i += 32) {
+        cx.beginPath();
+        cx.moveTo(i, 0);
+        cx.lineTo(i + 16, 0);
+        cx.lineTo(i - 10, h);
+        cx.lineTo(i - 26, h);
+        cx.closePath();
+        cx.fill();
+      }
+      cx.fillStyle = '#0f2038';
+      cx.fillRect(30, 14, 196, 36);
+      cx.fillStyle = '#ffeb3b';
+      cx.font = 'bold 20px Arial, sans-serif';
+      cx.textAlign = 'center';
+      cx.fillText('JK POLICE', 128, 39);
+    }, 256, 64);
+  }
+
+  const jerseyTex = makeJerseyTex();
+  const metalBarricadeTex = makeMetalBarricadeTex();
+  const roadClosedTex = makeRoadClosedSignTex();
+  const northPoliceBanner = makePoliceBannerTex('RESTRICTED BORDER ZONE • ENTRY BY PERMIT ONLY');
+  const southPoliceBanner = makePoliceBannerTex('DALGATE SECURITY CORDON • NO EXIT BEYOND THIS POINT');
+
+  function buildJkPoliceCheckpoint(opts: {
+    z: number;
+    facing: 1 | -1;
+    postName: string;
+    bannerTex: THREE.CanvasTexture;
+  }) {
+    const { z, facing, postName, bannerTex } = opts;
+    const inward = z - facing * 1.8;
+    const signZ = z - facing * 0.3;
+    const signYaw = facing === 1 ? PI : 0;
+    const cp = new THREE.Group();
+    const jMat = new THREE.MeshLambertMaterial({ map: jerseyTex });
+    const mbMat = new THREE.MeshLambertMaterial({ map: metalBarricadeTex });
+    const pipeMat = mat(0x222222);
+    const pipeGeo = new THREE.CylinderGeometry(0.04, 0.04, 1.6, 6);
+    const signSide = THREE.DoubleSide;
+
+    for (let x = -23; x <= 17; x += 4.4) {
+      const jb = new THREE.Group();
+      const base = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.4, 1.4), jMat);
+      base.position.y = 0.2;
+      const mid = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.6, 0.9), jMat);
+      mid.position.y = 0.7;
+      const top = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.4, 0.5), jMat);
+      top.position.y = 1.2;
+      jb.add(base, mid, top);
+      jb.position.set(x, 0, z);
+      cp.add(jb);
+    }
+
+    for (let bx = -21; bx <= 15; bx += 4.8) {
+      const bar = new THREE.Group();
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.85, 0.08), mbMat);
+      panel.position.y = 1.1;
+      const postL = new THREE.Mesh(pipeGeo, pipeMat);
+      postL.position.set(-2.0, 0.8, 0);
+      const postR = new THREE.Mesh(pipeGeo, pipeMat);
+      postR.position.set(2.0, 0.8, 0);
+      const legL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 1.1), pipeMat);
+      legL.position.set(-2.0, 0.05, 0);
+      const legR = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 1.1), pipeMat);
+      legR.position.set(2.0, 0.05, 0);
+      bar.add(panel, postL, postR, legL, legR);
+      bar.position.set(bx, 0, inward);
+      bar.rotation.y = signYaw;
+      cp.add(bar);
+    }
+
+    const coilGeo = new THREE.TorusGeometry(0.48, 0.03, 5, 12);
+    const wireMat = new THREE.MeshStandardMaterial({ color: 0xdfe7ec, roughness: 0.3, metalness: 0.9 });
+    const totalCoils = 130;
+    const wireMesh = new THREE.InstancedMesh(coilGeo, wireMat, totalCoils);
+    const dCoil = new THREE.Object3D();
+    let cIdx = 0;
+    for (let wx = -23; wx <= 17; wx += 0.6) {
+      if (cIdx >= totalCoils) break;
+      dCoil.position.set(wx, 1.85, z + Math.sin(wx * 2) * 0.08);
+      dCoil.rotation.set(0.1, wx * 1.2, PI / 2);
+      dCoil.updateMatrix();
+      wireMesh.setMatrixAt(cIdx++, dCoil.matrix);
+    }
+    for (let wx2 = -22; wx2 <= 16; wx2 += 0.7) {
+      if (cIdx >= totalCoils) break;
+      dCoil.position.set(wx2, 0.48, z - facing * 0.8);
+      dCoil.rotation.set(-0.1, -wx2 * 1.3, PI / 2);
+      dCoil.updateMatrix();
+      wireMesh.setMatrixAt(cIdx++, dCoil.matrix);
+    }
+    wireMesh.count = cIdx;
+    wireMesh.instanceMatrix.needsUpdate = true;
+    cp.add(wireMesh);
+
+    const postGeo = new THREE.BoxGeometry(0.08, 2.4, 0.08);
+    const steelMat = mat(0x384147);
+    for (let px = -23; px <= 17; px += 3.6) {
+      const stP = new THREE.Mesh(postGeo, steelMat);
+      stP.position.set(px, 1.2, z);
+      const armL = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.5, 0.06), steelMat);
+      armL.position.set(0, 1.2, -0.18 * facing);
+      armL.rotation.x = 0.6 * facing;
+      const armR = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.5, 0.06), steelMat);
+      armR.position.set(0, 1.2, 0.18 * facing);
+      armR.rotation.x = -0.6 * facing;
+      stP.add(armL, armR);
+      cp.add(stP);
+    }
+
+    const gantryMat = mat(0x283238);
+    const pL = new THREE.Mesh(new THREE.BoxGeometry(0.4, 6.2, 0.4), gantryMat);
+    pL.position.set(-8.5, 3.1, z);
+    const pR = new THREE.Mesh(new THREE.BoxGeometry(0.4, 6.2, 0.4), gantryMat);
+    pR.position.set(8.5, 3.1, z);
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(17.4, 0.4, 0.4), gantryMat);
+    beam.position.set(0, 6.0, z);
+    cp.add(pL, pR, beam);
+
+    const rcSign = new THREE.Mesh(
+      new THREE.PlaneGeometry(10.5, 2.6),
+      new THREE.MeshBasicMaterial({ map: roadClosedTex, side: signSide })
+    );
+    rcSign.position.set(0, 4.8, signZ);
+    rcSign.rotation.y = signYaw;
+    cp.add(rcSign);
+
+    const jkSign = new THREE.Mesh(
+      new THREE.PlaneGeometry(9.6, 2.4),
+      new THREE.MeshBasicMaterial({ map: bannerTex, side: signSide })
+    );
+    jkSign.position.set(0, 2.5, signZ);
+    jkSign.rotation.y = signYaw;
+    cp.add(jkSign);
+
+    const amberMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+    [-8.5, -3.5, 3.5, 8.5].forEach(lx => {
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), amberMat);
+      bulb.position.set(lx, 6.4, z);
+      cp.add(bulb);
+      amberLights.push(bulb);
+    });
+
+    const boothGroup = new THREE.Group();
+    boothGroup.position.set(-14.5, 0, z - facing * 3.5);
+    const sandbagMat = mat(0xa6957b);
+    for (let sy = 0; sy < 3; sy++) {
+      for (let sx = -2.4; sx <= 2.4; sx += 1.2) {
+        const sb = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.32, 0.7), sandbagMat);
+        sb.position.set(sx, 0.16 + sy * 0.3, 1.8 * facing);
+        boothGroup.add(sb);
+      }
+    }
+
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(3.6, 3.4, 3.6), mat(0x2f4035));
+    cabin.position.set(0, 1.7, 0);
+    const tinRoof = new THREE.Mesh(new THREE.ConeGeometry(2.8, 1.2, 4).rotateY(PI / 4), mat(0x6e2c24));
+    tinRoof.position.set(0, 4.0, 0);
+    const slit = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.8), new THREE.MeshBasicMaterial({ color: 0x111c15, side: signSide }));
+    slit.position.set(0, 2.2, 1.81 * facing);
+    slit.rotation.y = signYaw;
+    const boothSignTex = signTex(postName, '#0f2038', '#ffeb3b');
+    boothSignTex.colorSpace = THREE.SRGBColorSpace;
+    const boothSign = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.6, 0.6),
+      new THREE.MeshBasicMaterial({ map: boothSignTex, side: signSide })
+    );
+    boothSign.position.set(0, 3.2, 1.82 * facing);
+    boothSign.rotation.y = signYaw;
+
+    const boomPole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.4, 6), mat(0x111111));
+    boomPole.position.set(2.2, 0.7, 1.0 * facing);
+    const boomArm = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.18, 0.1), mat(0xff3333));
+    boomArm.position.set(5.2, 1.0, 1.0 * facing);
+    boothGroup.add(cabin, tinRoof, slit, boothSign, boomPole, boomArm);
+    cp.add(boothGroup);
+
+    scene.add(cp);
+  }
+
+  buildJkPoliceCheckpoint({
+    z: NORTH_CHECKPOINT_Z,
+    facing: 1,
+    postName: 'JK POLICE POST NO. 4',
+    bannerTex: northPoliceBanner,
   });
-  scene.add(cp);
+  buildJkPoliceCheckpoint({
+    z: SOUTH_CHECKPOINT_Z,
+    facing: -1,
+    postName: 'JK POLICE DALGATE POST',
+    bannerTex: southPoliceBanner,
+  });
 
   // 6. Dal Lake Luxury Houseboats & Shikaras
   const houseboats: { group: THREE.Group; baseY: number; z: number }[] = [];
@@ -752,7 +1008,8 @@ export function buildSrinagarWorld(scene: THREE.Scene): WorldObjects {
     shikaras,
     amberLights,
     waterMaterial,
-    barrierHitZ: CHECKPOINT_Z - 1.6,
+    barrierHitZ: NORTH_CHECKPOINT_Z - 1.6,
+    southBarrierHitZ: SOUTH_CHECKPOINT_Z + 1.6,
     nishatFountains,
   };
 }

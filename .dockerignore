@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.cursor
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+server_data
+coverage
+build

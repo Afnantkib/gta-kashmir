@@ -467,6 +467,54 @@ export function playGrenadeLaunchFX() {
   } catch {}
 }
 
+export function playKangriFX() {
+  if (!AC || isMuted) return;
+  try {
+    const t = AC.currentTime;
+    const roar = AC.createOscillator();
+    const rg = AC.createGain();
+    roar.type = 'sawtooth';
+    roar.frequency.setValueAtTime(220, t);
+    roar.frequency.exponentialRampToValueAtTime(55, t + 0.55);
+    rg.gain.setValueAtTime(0.42, t);
+    rg.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    roar.connect(rg);
+    rg.connect(AC.destination);
+    roar.start(t);
+    roar.stop(t + 0.62);
+
+    const noise = AC.createBufferSource();
+    noise.buffer = getNoiseBuffer(AC);
+    const filter = AC.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1400, t);
+    filter.frequency.exponentialRampToValueAtTime(280, t + 0.5);
+    const ng = AC.createGain();
+    ng.gain.setValueAtTime(0.55, t);
+    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+    noise.connect(filter);
+    filter.connect(ng);
+    ng.connect(AC.destination);
+    noise.start(t);
+    noise.stop(t + 0.58);
+
+    for (let i = 0; i < 5; i++) {
+      const pt = t + i * 0.045;
+      const pop = AC.createOscillator();
+      const pg = AC.createGain();
+      pop.type = 'triangle';
+      pop.frequency.setValueAtTime(480 + Math.random() * 520, pt);
+      pop.frequency.exponentialRampToValueAtTime(70, pt + 0.1);
+      pg.gain.setValueAtTime(0.28, pt);
+      pg.gain.exponentialRampToValueAtTime(0.001, pt + 0.12);
+      pop.connect(pg);
+      pg.connect(AC.destination);
+      pop.start(pt);
+      pop.stop(pt + 0.14);
+    }
+  } catch {}
+}
+
 export function playFirecrackerFX() {
   if (!AC || isMuted) return;
   try {
