@@ -176,19 +176,33 @@ export function initAudio() {
     sirenOsc.start();
     sirenLFO.start();
 
-    GTA_MUSIC.isPlaying = true;
-    GTA_MUSIC.nextTime = AC.currentTime + 0.1;
-    setInterval(scheduleMusic, 45);
+    GTA_MUSIC.isPlaying = false;
   } catch (err) {
     console.warn('[Audio] Web Audio initialization warning:', err);
   }
 }
 
-let bgAudioElement: HTMLAudioElement | null = null;
-let isAudioSongPlaying = false;
+let themeAudio: HTMLAudioElement | null = null;
+let clashAudio: HTMLAudioElement | null = null;
+let isClashSongPlaying = false;
 let lastCollisionAudioTime = 0;
 
-export const KASHMIRI_AUDIO_PATH = '/assets/aistudio/Danisha_kale_ha_phot_-_Shahid_Tariq__128k___cut_22sec__dec5652f.mp3';
+export const THEME_AUDIO_PATH = '/assets/audio/gta-san-andreas-theme.mp3';
+export const KASHMIRI_AUDIO_PATH = '/assets/audio/danisha-kale-ha-phot.mp3';
+const THEME_VOLUME = 0.42;
+const THEME_DUCKED = 0.06;
+const CLASH_VOLUME = 0.95;
+
+function makeAudio(src: string, loop: boolean): HTMLAudioElement {
+  const el = new Audio(src);
+  el.preload = 'auto';
+  el.loop = loop;
+  return el;
+}
+
+function setThemeVolume(vol: number) {
+  if (themeAudio) themeAudio.volume = isMuted ? 0 : vol;
+}
 
 /**
  * Plays physical metal collision crash SFX via Web Audio API.
@@ -234,46 +248,35 @@ export function playCrashFX() {
  * without stutter-restarting on continuous contact.
  */
 export function playCollisionAudio(forceRestart: boolean = false) {
-  // Always trigger physical impact sound
   playCrashFX();
 
   const now = Date.now();
-  if (now - lastCollisionAudioTime < 600) return; // 0.6s minimum debounce between distinct clash triggers
+  if (now - lastCollisionAudioTime < 600) return;
   lastCollisionAudioTime = now;
 
   try {
-    if (!bgAudioElement) {
-      bgAudioElement = new Audio(KASHMIRI_AUDIO_PATH);
-      bgAudioElement.preload = 'auto';
-      bgAudioElement.loop = false;
-      bgAudioElement.onended = () => {
-        isAudioSongPlaying = false;
-        // Restore background radio gain when song finishes
-        if (musicGain && !isMuted && AC) {
-          musicGain.gain.setTargetAtTime(0.32, AC.currentTime, 0.4);
-        }
+    if (!clashAudio) {
+      clashAudio = makeAudio(KASHMIRI_AUDIO_PATH, false);
+      clashAudio.onended = () => {
+        isClashSongPlaying = false;
+        setThemeVolume(THEME_VOLUME);
       };
     }
 
-    // If the song is already actively playing, let it play out once
-    if (isAudioSongPlaying && !bgAudioElement.paused && !bgAudioElement.ended && !forceRestart) {
+    if (isClashSongPlaying && !clashAudio.paused && !clashAudio.ended && !forceRestart) {
       return;
     }
 
-    bgAudioElement.pause();
-    bgAudioElement.currentTime = 0;
-    bgAudioElement.volume = isMuted ? 0 : 0.95;
+    clashAudio.pause();
+    clashAudio.currentTime = 0;
+    clashAudio.volume = isMuted ? 0 : CLASH_VOLUME;
+    setThemeVolume(THEME_DUCKED);
 
-    // Duck background procedural radio so the Kashmiri song shines through loud and clear
-    if (musicGain && AC) {
-      musicGain.gain.setValueAtTime(0.04, AC.currentTime);
-    }
-
-    const playPromise = bgAudioElement.play();
+    const playPromise = clashAudio.play();
     if (playPromise !== undefined) {
       playPromise
         .then(() => {
-          isAudioSongPlaying = true;
+          isClashSongPlaying = true;
         })
         .catch(e => {
           console.warn('[Audio] Collision audio play catch:', e);
@@ -285,20 +288,24 @@ export function playCollisionAudio(forceRestart: boolean = false) {
 }
 
 export function playKashmiriSoundtrack() {
-  // Pre-instantiate and warm up audio element on user start gesture
-  if (!bgAudioElement) {
-    try {
-      bgAudioElement = new Audio(KASHMIRI_AUDIO_PATH);
-      bgAudioElement.preload = 'auto';
-      bgAudioElement.loop = false;
-      bgAudioElement.volume = isMuted ? 0 : 0.95;
-      bgAudioElement.onended = () => {
-        isAudioSongPlaying = false;
-        if (musicGain && !isMuted && AC) {
-          musicGain.gain.setTargetAtTime(0.32, AC.currentTime, 0.4);
-        }
-      };
-    } catch {}
+  try {
+    if (!themeAudio) {
+      themeAudio = makeAudio(THEME_AUDIO_PATH, true);
+    }
+    themeAudio.loop = true;
+    setThemeVolume(isClashSongPlaying ? THEME_DUCKED : THEME_VOLUME);
+    if (isMuted) {
+      themeAudio.pause();
+      return;
+    }
+    const playPromise = themeAudio.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(e => {
+        console.warn('[Audio] Theme play catch:', e);
+      });
+    }
+  } catch (err) {
+    console.warn('[Audio] Theme audio error:', err);
   }
 }
 
@@ -339,9 +346,12 @@ export function toggleAudioMute(): boolean {
   if (motorGain) motorGain.gain.value = isMuted ? 0 : 0.05;
   if (musicGain) musicGain.gain.value = isMuted ? 0 : 0.28;
   if (sirenGain) sirenGain.gain.value = isMuted || !isSirenActive ? 0 : 0.22;
-  if (bgAudioElement) {
-    bgAudioElement.volume = isMuted ? 0 : 0.65;
+  if (themeAudio) {
+    themeAudio.volume = isMuted ? 0 : isClashSongPlaying ? THEME_DUCKED : THEME_VOLUME;
+    if (isMuted) themeAudio.pause();
+    else void themeAudio.play().catch(() => {});
   }
+  if (clashAudio) clashAudio.volume = isMuted ? 0 : CLASH_VOLUME;
   return isMuted;
 }
 
