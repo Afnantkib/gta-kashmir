@@ -240,7 +240,7 @@
   },
   "p_1794554447019_hetm5x": {
     "id": "p_1794554447019_hetm5x",
-    "name": "Driver_9985",
+    "name": "Driver_7544",
     "cash": 1500,
     "xp": 0,
     "level": 1,
@@ -261,7 +261,7 @@
       "weaponUsage": {}
     },
     "createdAt": "2026-11-13T07:30:17.867Z",
-    "lastActiveAt": "2026-11-13T08:44:12.807Z"
+    "lastActiveAt": "2026-11-13T10:49:18.040Z"
   },
   "p_1794555200429_nhqqap": {
     "id": "p_1794555200429_nhqqap",
@@ -436,6 +436,181 @@
       "weaponUsage": {}
     },
     "createdAt": "2026-11-13T08:51:51.280Z",
-    "lastActiveAt": "2026-11-13T08:51:51.280Z"
+    "lastActiveAt": "2026-11-13T08:54:11.083Z"
+  },
+  "p_1794560942811_92pfh0": {
+    "id": "p_1794560942811_92pfh0",
+    "name": "Driver_1660",
+    "cash": 1500,
+    "xp": 0,
+    "level": 1,
+    "selectedVehicle": "auto",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 0,
+      "matchesPlayed": 0,
+      "kills": 0,
+      "damageDealt": 0,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T09:09:04.469Z",
+    "lastActiveAt": "2026-11-13T09:30:06.036Z"
+  },
+  "p_1794563495583_qkggor": {
+    "id": "p_1794563495583_qkggor",
+    "name": "Driver_1532",
+    "cash": 1500,
+    "xp": 0,
+    "level": 1,
+    "selectedVehicle": "auto",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 0,
+      "matchesPlayed": 0,
+      "kills": 0,
+      "damageDealt": 0,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T09:52:28.090Z",
+    "lastActiveAt": "2026-11-13T09:58:38.466Z"
+  },
+  "p_1794564189115_b4ph8e": {
+    "id": "p_1794564189115_b4ph8e",
+    "name": "Driver_4963",
+    "cash": 1500,
+    "xp": 0,
+    "level": 1,
+    "selectedVehicle": "auto",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 0,
+      "matchesPlayed": 0,
+      "kills": 0,
+      "damageDealt": 0,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T10:03:11.100Z",
+    "lastActiveAt": "2026-11-13T10:09:06.868Z"
+  },
+  "p_1794564617361_nayinv": {
+    "id": "p_1794564617361_nayinv",
+    "name": "Driver_3410",
+    "cash": 1500,
+    "xp": 0,
+    "level": 1,
+    "selectedVehicle": "auto",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 0,
+      "matchesPlayed": 0,
+      "kills": 0,
+      "damageDealt": 0,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T10:10:19.110Z",
+    "lastActiveAt": "2026-11-13T10:10:19.110Z"
+  },
+  "p_1794564618732_47g06u": {
+    "id": "p_1794564618732_47g06u",
+    "name": "Driver_2907",
+    "cash": 7150,
+    "xp": 720,
+    "level": 2,
+    "selectedVehicle": "auto",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 1,
+      "matchesPlayed": 1,
+      "kills": 1,
+      "damageDealt": 102,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T10:10:23.544Z",
+    "lastActiveAt": "2026-11-13T10:42:08.300Z"
+  },
+  "p_1794564184656_obksnf": {
+    "id": "p_1794564184656_obksnf",
+    "name": "Driver_2985",
+    "cash": 1500,
+    "xp": 0,
+    "level": 1,
+    "selectedVehicle": "auto",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 0,
+      "matchesPlayed": 0,
+      "kills": 0,
+      "damageDealt": 0,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T10:49:31.069Z",
+    "lastActiveAt": "2026-11-13T10:49:31.069Z"
+  },
+  "p_1794566991980_bmlzou": {
+    "id": "p_1794566991980_bmlzou",
+    "name": "Driver_6536",
+    "cash": 1500,
+    "xp": 0,
+    "level": 1,
+    "selectedVehicle": "auto",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 0,
+      "matchesPlayed": 0,
+      "kills": 0,
+      "damageDealt": 0,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T10:49:53.805Z",
+    "lastActiveAt": "2026-11-13T10:49:53.805Z"
   }
 }
