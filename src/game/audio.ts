@@ -188,7 +188,7 @@ let isClashSongPlaying = false;
 let lastCollisionAudioTime = 0;
 
 export const THEME_AUDIO_PATH = '/assets/audio/gta-san-andreas-theme.mp3';
-export const KASHMIRI_AUDIO_PATH = '/assets/audio/danisha-kale-ha-phot.mp3';
+export const CLASH_AUDIO_PATH = '/assets/audio/clash_final.mp3';
 const THEME_VOLUME = 0.42;
 const THEME_DUCKED = 0.06;
 const CLASH_VOLUME = 0.95;
@@ -243,28 +243,23 @@ export function playCrashFX() {
 }
 
 /**
- * Plays the song once when a vehicle clashes with a wall/boundary/hotel/vehicle.
- * If the song is already actively playing from a clash, it lets it play through once
- * without stutter-restarting on continuous contact.
+ * Plays clash_final.mp3 when a vehicle hits a wall, boundary, hotel, or vehicle.
+ * Continuous contact is throttled so the clip does not stutter-restart.
  */
 export function playCollisionAudio(forceRestart: boolean = false) {
   playCrashFX();
 
   const now = Date.now();
-  if (now - lastCollisionAudioTime < 600) return;
+  if (!forceRestart && now - lastCollisionAudioTime < 600) return;
   lastCollisionAudioTime = now;
 
   try {
     if (!clashAudio) {
-      clashAudio = makeAudio(KASHMIRI_AUDIO_PATH, false);
+      clashAudio = makeAudio(CLASH_AUDIO_PATH, false);
       clashAudio.onended = () => {
         isClashSongPlaying = false;
         setThemeVolume(THEME_VOLUME);
       };
-    }
-
-    if (isClashSongPlaying && !clashAudio.paused && !clashAudio.ended && !forceRestart) {
-      return;
     }
 
     clashAudio.pause();

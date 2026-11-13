@@ -98,6 +98,7 @@ export class RoomManager {
   private worldPickupSeq = 1;
   private lastMinuteAnnounced = false;
   private lastAliveAnnounced = -1;
+  private ramCooldown = new Map<string, number>();
 
   constructor() {
     this.initRoadBots();
@@ -583,6 +584,20 @@ export class RoomManager {
                   message: chatMsg,
                 });
               }
+              break;
+            }
+
+            case 'RAM': {
+              if (!clientSessionId) return;
+              const client = this.clients.get(clientSessionId);
+              if (!client) return;
+              this.resolveRam(
+                client,
+                String(msg.targetId || ''),
+                Number(msg.speed),
+                Number(msg.x),
+                Number(msg.z)
+              );
               break;
             }
 
@@ -1310,18 +1325,86 @@ export class RoomManager {
     }
   }
 
-  private hullDamage(wType: WeaponType, amount: number) {
+  private hullDamage(wType: WeaponType | 'ram', amount: number) {
+    if (wType === 'ram') return amount;
     if (wType === 'kangri') return 50;
     return Math.round(amount * (VEHICLE_DAMAGE_MULT[wType] ?? 1));
   }
 
-  private hurtRoadBot(bot: PlayerServerState, amount: number, attackerId: string, attackerName: string, wType: WeaponType) {
+  private ramDamageForSpeed(speed: number) {
+    const s = Math.min(Math.abs(speed), 45);
+    if (s < 4.5) return 0;
+    return Math.min(58, Math.round(8 + (s - 4.5) * 1.35));
+  }
+
+  private resolveRam(client: ConnectedClient, targetId: string, speed: number, x: number, z: number) {
+    if (!client.combat.isAlive) return;
+    if (!targetId || targetId === client.playerId) return;
+    if (!Number.isFinite(speed) || !Number.isFinite(x) || !Number.isFinite(z)) return;
+
+    const maxSpeed = (VEHICLE_CONFIGS[client.vehicle]?.maxSpeed ?? 40) + 30;
+    const impact = this.ramDamageForSpeed(Math.min(Math.abs(speed), maxSpeed));
+    if (impact <= 0) return;
+
+    const now = Date.now();
+    const human = this.clients.get(targetId);
+    const arena = this.arenaBots.get(targetId);
+    const road = this.bots.get(targetId);
+
+    let tx = NaN;
+    let tz = NaN;
+    let kind: 'player' | 'arena' | 'road' | null = null;
+    if (human?.combat.isAlive) {
+      if (human.mode !== client.mode) return;
+      if (client.mode === 'battle_arena' && (this.matchState.state !== 'active' || !client.inMatch || !human.inMatch)) return;
+      tx = human.state.x;
+      tz = human.state.z;
+      kind = 'player';
+    } else if (arena?.combat.isAlive) {
+      if (client.mode !== 'battle_arena' || this.matchState.state !== 'active' || !client.inMatch) return;
+      tx = arena.state.x;
+      tz = arena.state.z;
+      kind = 'arena';
+    } else if (road && road.combat?.isAlive !== false) {
+      if (client.mode !== 'free_roam') return;
+      tx = road.x;
+      tz = road.z;
+      kind = 'road';
+    }
+    if (!kind || Math.hypot(x - tx, z - tz) > 8) return;
+
+    const victimInvuln = human
+      ? human.combat.invulnerableUntil
+      : arena
+        ? arena.combat.invulnerableUntil
+        : road?.combat?.invulnerableUntil || 0;
+    if (now < victimInvuln) return;
+
+    const key = `${client.playerId}:${targetId}`;
+    if (now - (this.ramCooldown.get(key) || 0) < 650) return;
+    this.ramCooldown.set(key, now);
+
+    if (kind === 'player' && human) {
+      this.dealDamageToPlayer(human, impact, client.playerId, client.name, 'ram', human.state.x, human.state.z);
+      human.state.combat = human.combat;
+    } else if (kind === 'arena' && arena) {
+      this.dealDamageToBot(arena, impact, client.playerId, client.name, 'ram', arena.state.x, arena.state.z);
+    } else if (kind === 'road' && road) {
+      this.hurtRoadBot(road, impact, client.playerId, client.name, 'ram');
+    }
+
+    const selfDamage = Math.max(4, Math.round(impact * 0.5));
+    this.dealDamageToPlayer(client, selfDamage, client.playerId, client.name, 'ram', client.state.x, client.state.z);
+    client.state.combat = client.combat;
+  }
+
+  private hurtRoadBot(bot: PlayerServerState, amount: number, attackerId: string, attackerName: string, wType: WeaponType | 'ram') {
     if (!bot.combat) bot.combat = this.createCombatState();
     if (Date.now() < bot.combat.invulnerableUntil) return;
     bot.combat.health = Math.max(0, bot.combat.health - amount);
     bot.combat.vehicleHealth = Math.max(0, (bot.combat.vehicleHealth ?? 100) - this.hullDamage(wType, amount));
     const attacker = this.clients.get(attackerId);
-    if (attacker) attacker.combat.damageDealt += amount;
+    if (attacker && attacker.playerId !== bot.id) attacker.combat.damageDealt += amount;
     const dead = bot.combat.health <= 0 || bot.combat.vehicleHealth <= 0;
     if (dead) {
       bot.combat.health = 0;
@@ -2401,7 +2484,7 @@ export class RoomManager {
     amount: number,
     attackerId: string,
     attackerName: string,
-    wType: WeaponType,
+    wType: WeaponType | 'ram',
     x: number,
     z: number
   ) {
@@ -2436,7 +2519,7 @@ export class RoomManager {
 
     // Credit attacker
     const attacker = this.clients.get(attackerId);
-    if (attacker) {
+    if (attacker && attacker.playerId !== victim.playerId) {
       attacker.combat.damageDealt += amount;
       if (isElim) {
         attacker.combat.kills += 1;
@@ -2514,7 +2597,7 @@ export class RoomManager {
     amount: number,
     attackerId: string,
     attackerName: string,
-    wType: WeaponType,
+    wType: WeaponType | 'ram',
     x: number,
     z: number
   ) {
@@ -2545,7 +2628,7 @@ export class RoomManager {
     }
 
     const attacker = this.clients.get(attackerId);
-    if (attacker) {
+    if (attacker && attacker.playerId !== victim.state.id) {
       attacker.combat.damageDealt += amount;
       if (isElim) {
         attacker.combat.kills += 1;

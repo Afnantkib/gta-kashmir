@@ -637,5 +637,105 @@
     },
     "createdAt": "2026-11-13T10:57:03.888Z",
     "lastActiveAt": "2026-11-13T10:57:03.888Z"
+  },
+  "p_1794570821518_htg53v": {
+    "id": "p_1794570821518_htg53v",
+    "name": "Driver_5750",
+    "cash": 1500,
+    "xp": 0,
+    "level": 1,
+    "selectedVehicle": "auto",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 0,
+      "matchesPlayed": 0,
+      "kills": 0,
+      "damageDealt": 0,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T11:53:49.867Z",
+    "lastActiveAt": "2026-11-13T11:54:09.292Z"
+  },
+  "p_1794570908464_cktg9l": {
+    "id": "p_1794570908464_cktg9l",
+    "name": "afnan",
+    "cash": 1500,
+    "xp": 0,
+    "level": 1,
+    "selectedVehicle": "auto",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 0,
+      "matchesPlayed": 0,
+      "kills": 0,
+      "damageDealt": 0,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T11:55:16.346Z",
+    "lastActiveAt": "2026-11-13T11:55:30.602Z"
+  },
+  "p_1794570911909_fh81so": {
+    "id": "p_1794570911909_fh81so",
+    "name": "Driver_9665",
+    "cash": 1500,
+    "xp": 0,
+    "level": 1,
+    "selectedVehicle": "bike",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 0,
+      "matchesPlayed": 0,
+      "kills": 0,
+      "damageDealt": 0,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T11:55:41.362Z",
+    "lastActiveAt": "2026-11-13T12:02:23.994Z"
+  },
+  "p_1794571450526_ax8yri": {
+    "id": "p_1794571450526_ax8yri",
+    "name": "Driver_6846",
+    "cash": 1500,
+    "xp": 0,
+    "level": 1,
+    "selectedVehicle": "auto",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 0,
+      "matchesPlayed": 0,
+      "kills": 0,
+      "damageDealt": 0,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T12:04:48.348Z",
+    "lastActiveAt": "2026-11-13T12:04:48.348Z"
   }
 }

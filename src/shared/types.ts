@@ -568,7 +568,7 @@ export interface DamageEvent {
   victimId: string;
   victimName: string;
   amount: number;
-  weaponType: WeaponType;
+  weaponType: WeaponType | 'ram';
   x: number;
   y: number;
   z: number;

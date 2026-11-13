@@ -107,6 +107,33 @@ function muzzleWorld(bundle: VehicleMeshBundle | null): { x: number; y: number; 
   return { x: world.x, y: world.y, z: world.z };
 }
 
+function setVehicleHurt(bundle: VehicleMeshBundle, level: 0 | 1 | 2) {
+  const existing = bundle.root.getObjectByName('hurtSmoke');
+  if (level === 0) {
+    if (existing) bundle.root.remove(existing);
+    return;
+  }
+  if (existing && existing.userData.level === level) return;
+  if (existing) bundle.root.remove(existing);
+  const smoke = new THREE.Group();
+  smoke.name = 'hurtSmoke';
+  smoke.userData.level = level;
+  const puffs = level === 2 ? 4 : 2;
+  for (let i = 0; i < puffs; i++) {
+    const puff = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12 + i * 0.04, 6, 6),
+      new THREE.MeshBasicMaterial({
+        color: level === 2 ? 0x374151 : 0x9ca3af,
+        transparent: true,
+        opacity: level === 2 ? 0.55 : 0.35,
+      })
+    );
+    puff.position.set((i - 1) * 0.18, 1.05 + i * 0.12, -0.35);
+    smoke.add(puff);
+  }
+  bundle.root.add(smoke);
+}
+
 function setVehicleWrecked(bundle: VehicleMeshBundle, wrecked: boolean) {
   if (bundle.root.userData.wrecked === wrecked) return;
   bundle.root.userData.wrecked = wrecked;
@@ -115,6 +142,7 @@ function setVehicleWrecked(bundle: VehicleMeshBundle, wrecked: boolean) {
   bundle.body.position.y = wrecked ? 0.08 : 0;
   const existing = bundle.root.getObjectByName('wreckSmoke');
   if (existing) bundle.root.remove(existing);
+  if (wrecked) setVehicleHurt(bundle, 0);
   if (!wrecked) return;
   const smoke = new THREE.Group();
   smoke.name = 'wreckSmoke';
@@ -388,6 +416,7 @@ export default function App() {
 
   const [playerHealth, setPlayerHealth] = useState(100);
   const [playerVehicleHealth, setPlayerVehicleHealth] = useState(100);
+  const localHullRef = useRef(100);
   const [playerShield, setPlayerShield] = useState(0);
   const [equippedWeapon, setEquippedWeapon] = useState<WeaponType | null>(null);
   const [ammo, setAmmo] = useState(0);
@@ -426,6 +455,7 @@ export default function App() {
 
   // References to live mutable game state
   const clashTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastRamSentRef = useRef<Map<string, number>>(new Map());
   const crashShakeRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
   const playerIdRef = useRef<string>((() => {
@@ -1249,7 +1279,9 @@ export default function App() {
           const localServerPlayer = players.find(p => p.id === playerIdRef.current);
           if (localServerPlayer?.combat) {
             setPlayerHealth(localServerPlayer.combat.health);
-            setPlayerVehicleHealth(localServerPlayer.combat.vehicleHealth ?? localServerPlayer.combat.health);
+            const hull = localServerPlayer.combat.vehicleHealth ?? localServerPlayer.combat.health;
+            localHullRef.current = hull;
+            setPlayerVehicleHealth(hull);
             setPlayerShield(localServerPlayer.combat.shield);
             setKills(localServerPlayer.combat.kills);
             setDeaths(localServerPlayer.combat.deaths || 0);
@@ -1441,7 +1473,22 @@ export default function App() {
             }
           }
 
+          const rammed = remoteTargetsRef.current.get(ev.victimId);
+          if (rammed && ev.weaponType === 'ram') {
+            rammed.health = Math.max(0, (rammed.health ?? 100) - ev.amount);
+            rammed.vehicleHealth = Math.max(0, (rammed.vehicleHealth ?? 100) - ev.amount);
+            if (ev.isElimination || rammed.vehicleHealth <= 0 || rammed.health <= 0) {
+              rammed.isAlive = false;
+              rammed.health = 0;
+              rammed.vehicleHealth = 0;
+              rammed.speed = 0;
+            }
+          }
+
           if (ev.victimId === playerIdRef.current) {
+            if (ev.weaponType === 'ram') {
+              localHullRef.current = Math.max(0, localHullRef.current - ev.amount);
+            }
             if (ev.weaponType === 'kangri') {
               setFireHitFlash(true);
               setTimeout(() => setFireHitFlash(false), 420);
@@ -1455,7 +1502,9 @@ export default function App() {
             }
           } else if (ev.attackerId === playerIdRef.current) {
             showToast(
-              ev.weaponType === 'kangri'
+              ev.weaponType === 'ram'
+                ? `${ev.isElimination ? 'WRECKED' : 'RAMMED'} ${ev.victimName} −${ev.amount}`
+                : ev.weaponType === 'kangri'
                 ? `${ev.isElimination ? 'TORCHED' : 'SCORCHED'} ${ev.victimName} −${ev.amount}`
                 : `${ev.isElimination ? 'ELIMINATED' : 'HIT'} ${ev.victimName} −${ev.amount} HP`
             );
@@ -1474,10 +1523,16 @@ export default function App() {
         } else if (msg.type === 'PLAYER_ELIMINATED') {
           playEliminationHorn();
           const wCfg = WEAPON_CONFIGS[msg.weaponType as WeaponType];
+          const ramKill = msg.weaponType === 'ram';
           const feedItem = {
             id: `kf_${Date.now()}_${Math.random()}`,
-            text: `${msg.attackerName} eliminated ${msg.victimName}`,
-            icon: wCfg?.icon || '💥',
+            text:
+              ramKill && msg.attackerId === msg.victimId
+                ? `${msg.victimName} crashed`
+                : ramKill
+                  ? `${msg.attackerName} wrecked ${msg.victimName}`
+                  : `${msg.attackerName} eliminated ${msg.victimName}`,
+            icon: ramKill ? '💥' : wCfg?.icon || '💥',
           };
           setKillFeed(prev => [...prev.slice(-4), feedItem]);
 
@@ -1514,6 +1569,7 @@ export default function App() {
               localStateRef.current.speed = 0;
             }
             setPlayerHealth(100);
+            localHullRef.current = 100;
             setPlayerVehicleHealth(100);
             showToast('RESPAWNED');
           }
@@ -1618,7 +1674,7 @@ export default function App() {
         const reportClash = (obstacle: string) => {
           playCollisionAudio();
           crashShakeRef.current = Math.min(0.7, Math.max(0.3, Math.abs(loc.speed) * 0.025 + 0.2));
-          setClashNotification(`💥 CLASH! [${obstacle}] — Shahid Tariq: Danisha Kale Ha Phot`);
+          setClashNotification(`💥 CLASH! [${obstacle}]`);
           if (clashTimeoutRef.current) clearTimeout(clashTimeoutRef.current);
           clashTimeoutRef.current = setTimeout(() => {
             setClashNotification(null);
@@ -1733,11 +1789,25 @@ export default function App() {
           const dist = Math.hypot(dx, dz);
           const collisionRadius = target.vehicle === 'bike' ? 1.7 : 2.35;
           if (dist < collisionRadius && dist > 0.05) {
+            const impactSpeed = loc.speed;
             reportClash(`${target.name || 'Vehicle'}`);
             const pushDir = Math.atan2(dx, dz);
             loc.x += Math.sin(pushDir) * (collisionRadius - dist) * 0.7;
             loc.z += Math.cos(pushDir) * (collisionRadius - dist) * 0.7;
             bumpSpeed(0.35);
+            if (Math.abs(impactSpeed) >= 4.5 && ws.readyState === WebSocket.OPEN) {
+              const sentAt = lastRamSentRef.current.get(rId) || 0;
+              if (nowMs - sentAt >= 650) {
+                lastRamSentRef.current.set(rId, nowMs);
+                ws.send(JSON.stringify({
+                  type: 'RAM',
+                  targetId: rId,
+                  speed: impactSpeed,
+                  x: loc.x,
+                  z: loc.z,
+                }));
+              }
+            }
           }
         }
 
@@ -1768,6 +1838,8 @@ export default function App() {
           }
           bundle.root.visible = true;
           setVehicleWrecked(bundle, false);
+          const hull = localHullRef.current;
+          setVehicleHurt(bundle, hull < 35 ? 2 : hull < 75 ? 1 : 0);
           ensureHeldWeapon(bundle, equippedWeaponRef.current);
           const held = bundle.root.userData.heldMesh as THREE.Object3D | undefined;
           if (!isAimingRef.current) {
@@ -1872,13 +1944,19 @@ export default function App() {
             bundle.root.visible = !hideArenaIdle;
             setVehicleWrecked(bundle, false);
           }
+          if (dead) setVehicleHurt(bundle, 0);
+          else {
+            const hull = target.vehicleHealth ?? 100;
+            setVehicleHurt(bundle, hull < 35 ? 2 : hull < 75 ? 1 : 0);
+          }
           ensureHeldWeapon(bundle, target.isAlive === false ? null : target.weapon || null);
           const held = bundle.root.userData.heldMesh as THREE.Object3D | undefined;
           if (held) animateHeldWeapon(held, dt);
-          const smoke = bundle.root.getObjectByName('wreckSmoke');
+          const smoke = bundle.root.getObjectByName('wreckSmoke') || bundle.root.getObjectByName('hurtSmoke');
           if (smoke) {
             smoke.children.forEach((puff, i) => {
-              puff.position.y = 1.1 + i * 0.18 + Math.sin(clock * 3 + i) * 0.12;
+              const baseY = smoke.name === 'hurtSmoke' ? 1.05 + i * 0.12 : 1.1 + i * 0.18;
+              puff.position.y = baseY + Math.sin(clock * 3 + i) * 0.12;
               const mat = (puff as THREE.Mesh).material as THREE.MeshBasicMaterial;
               if (mat) mat.opacity = 0.28 + Math.sin(clock * 2 + i) * 0.12;
             });
@@ -2316,16 +2394,19 @@ export default function App() {
 
       {/* Title & Start Screen */}
       {!hasStarted && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center p-6 bg-gradient-to-b from-slate-950/90 via-sky-950/85 to-slate-950/95 backdrop-blur-md">
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center p-6">
+          <img
+            src="/assets/start-bg.jpg"
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+          <div className="absolute inset-0 bg-slate-950/45" />
           <div className="absolute top-5 right-5 z-10">
             <LiveTopFive board={liveScoreboard} localId={playerIdRef.current} />
           </div>
-          <div className="text-center max-w-xl space-y-4">
-            <div className="inline-flex items-center gap-2 px-3 py-1 bg-amber-500/20 border border-amber-500/40 rounded-full text-amber-300 text-sm font-semibold tracking-wider uppercase">
-              <Sparkles className="w-4 h-4 text-amber-400" /> Open-World 3D Srinagar & Battle Arena
-            </div>
+          <div className="relative z-10 text-center max-w-xl space-y-4">
             <h1 className="text-6xl md:text-7xl font-extrabold tracking-tight text-white drop-shadow-lg font-['Outfit']">
-              GTA KASHMIR
+              BTA KASHMIR
             </h1>
             <p className="text-xl font-medium text-sky-200">
               Boulevard Road · Dal Lake · Zabarwan Ridge · Battle Arena
