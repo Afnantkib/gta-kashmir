@@ -1795,7 +1795,7 @@ export default function App() {
             loc.x += Math.sin(pushDir) * (collisionRadius - dist) * 0.7;
             loc.z += Math.cos(pushDir) * (collisionRadius - dist) * 0.7;
             bumpSpeed(0.35);
-            if (Math.abs(impactSpeed) >= 4.5 && ws.readyState === WebSocket.OPEN) {
+            if (Math.abs(impactSpeed) >= 2.2 && ws.readyState === WebSocket.OPEN) {
               const sentAt = lastRamSentRef.current.get(rId) || 0;
               if (nowMs - sentAt >= 650) {
                 lastRamSentRef.current.set(rId, nowMs);
@@ -2396,7 +2396,7 @@ export default function App() {
       {!hasStarted && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center p-6">
           <img
-            src="/assets/start-bg.jpg"
+            src="/assets/start-bg.jpg?v=3"
             alt=""
             className="absolute inset-0 h-full w-full object-cover"
           />
@@ -2454,18 +2454,6 @@ export default function App() {
               >
                 <Swords className="w-5 h-5 text-slate-950" /> DAL LAKE MAYHEM (COMBAT)
               </button>
-
-              <button
-                onClick={() => {
-                  setHasStarted(true);
-                  switchGameMode('free_roam');
-                  initAudio();
-                  playKashmiriSoundtrack();
-                }}
-                className="w-full sm:w-auto px-7 py-3.5 bg-slate-800/90 hover:bg-slate-700 border border-slate-600 text-white font-bold text-lg rounded-xl shadow-lg transition-all cursor-pointer font-['Outfit'] flex items-center justify-center gap-2"
-              >
-                <Car className="w-5 h-5 text-cyan-400" /> BOULEVARD FREE-ROAM
-              </button>
             </div>
 
             <div className={`text-xs text-slate-400 flex flex-wrap items-center justify-center gap-3 pt-4 border-t border-slate-800 ${isMobile ? 'hidden' : ''}`}>
@@ -2504,13 +2492,6 @@ export default function App() {
               </div>
               <div className="pointer-events-auto flex gap-1 bg-slate-950/80 border border-slate-700 rounded-xl p-1">
                 <button
-                  onClick={() => switchGameMode('free_roam')}
-                  className={`p-2 rounded-lg ${gameMode === 'free_roam' ? 'bg-cyan-500 text-slate-950' : 'text-slate-300'}`}
-                  title="Free-Roam"
-                >
-                  <Car className="w-4 h-4" />
-                </button>
-                <button
                   onClick={() => switchGameMode('battle_arena')}
                   className={`p-2 rounded-lg ${gameMode === 'battle_arena' ? 'bg-amber-500 text-slate-950' : 'text-slate-300'}`}
                   title="Arena"
@@ -2523,17 +2504,6 @@ export default function App() {
 
           {/* Top Center: Game Mode Switcher Tab Bar */}
           <div className={`${isMobile ? 'hidden' : ''} absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex items-center p-1 bg-slate-950/85 border border-slate-700 rounded-2xl shadow-2xl backdrop-blur-md`}>
-            <button
-              onClick={() => switchGameMode('free_roam')}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                gameMode === 'free_roam'
-                  ? 'bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-md shadow-cyan-600/30'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Car className="w-3.5 h-3.5" />
-              <span>Boulevard Free-Roam</span>
-            </button>
             <button
               onClick={() => switchGameMode('battle_arena')}
               className={`flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${

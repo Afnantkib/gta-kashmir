@@ -1333,8 +1333,8 @@ export class RoomManager {
 
   private ramDamageForSpeed(speed: number) {
     const s = Math.min(Math.abs(speed), 45);
-    if (s < 4.5) return 0;
-    return Math.min(58, Math.round(8 + (s - 4.5) * 1.35));
+    if (s < 2.2) return 0;
+    return Math.min(58, Math.round(6 + (s - 2.2) * 1.4));
   }
 
   private resolveRam(client: ConnectedClient, targetId: string, speed: number, x: number, z: number) {
@@ -1355,23 +1355,19 @@ export class RoomManager {
     let tz = NaN;
     let kind: 'player' | 'arena' | 'road' | null = null;
     if (human?.combat.isAlive) {
-      if (human.mode !== client.mode) return;
-      if (client.mode === 'battle_arena' && (this.matchState.state !== 'active' || !client.inMatch || !human.inMatch)) return;
       tx = human.state.x;
       tz = human.state.z;
       kind = 'player';
     } else if (arena?.combat.isAlive) {
-      if (client.mode !== 'battle_arena' || this.matchState.state !== 'active' || !client.inMatch) return;
       tx = arena.state.x;
       tz = arena.state.z;
       kind = 'arena';
     } else if (road && road.combat?.isAlive !== false) {
-      if (client.mode !== 'free_roam') return;
       tx = road.x;
       tz = road.z;
       kind = 'road';
     }
-    if (!kind || Math.hypot(x - tx, z - tz) > 8) return;
+    if (!kind || Math.hypot(x - tx, z - tz) > 18) return;
 
     const victimInvuln = human
       ? human.combat.invulnerableUntil
@@ -1385,16 +1381,17 @@ export class RoomManager {
     this.ramCooldown.set(key, now);
 
     if (kind === 'player' && human) {
-      this.dealDamageToPlayer(human, impact, client.playerId, client.name, 'ram', human.state.x, human.state.z);
+      this.dealDamageToPlayer(human, impact, client.playerId, client.name, 'ram', human.state.x, human.state.z, true);
       human.state.combat = human.combat;
     } else if (kind === 'arena' && arena) {
-      this.dealDamageToBot(arena, impact, client.playerId, client.name, 'ram', arena.state.x, arena.state.z);
+      this.dealDamageToBot(arena, impact, client.playerId, client.name, 'ram', arena.state.x, arena.state.z, true);
+      arena.state.combat = arena.combat;
     } else if (kind === 'road' && road) {
       this.hurtRoadBot(road, impact, client.playerId, client.name, 'ram');
     }
 
     const selfDamage = Math.max(4, Math.round(impact * 0.5));
-    this.dealDamageToPlayer(client, selfDamage, client.playerId, client.name, 'ram', client.state.x, client.state.z);
+    this.dealDamageToPlayer(client, selfDamage, client.playerId, client.name, 'ram', client.state.x, client.state.z, true);
     client.state.combat = client.combat;
   }
 
@@ -2486,10 +2483,11 @@ export class RoomManager {
     attackerName: string,
     wType: WeaponType | 'ram',
     x: number,
-    z: number
+    z: number,
+    ram = false
   ) {
     const now = Date.now();
-    if (victim.mode === 'battle_arena') {
+    if (!ram && victim.mode === 'battle_arena') {
       if (this.matchState.state !== 'active') return;
       if (!victim.inMatch) return;
     }
@@ -2599,10 +2597,11 @@ export class RoomManager {
     attackerName: string,
     wType: WeaponType | 'ram',
     x: number,
-    z: number
+    z: number,
+    ram = false
   ) {
     const now = Date.now();
-    if (this.matchState.state !== 'active') return;
+    if (!ram && this.matchState.state !== 'active') return;
     if (now < victim.combat.invulnerableUntil) return;
 
     let dmgRemaining = amount;
