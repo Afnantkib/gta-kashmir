@@ -245,6 +245,7 @@ import {
   Skull,
   ChevronLeft,
   ChevronRight,
+  Square,
 } from 'lucide-react';
 
 function MobileHoldButton({
@@ -341,11 +342,14 @@ export default function App() {
   const [hasStarted, setHasStarted] = useState(false);
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === 'undefined') return false;
-    return window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 900;
+    const touch = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+    return window.matchMedia('(pointer: coarse)').matches || (touch && window.innerWidth <= 1024) || window.innerWidth < 768;
   });
   const isMobileRef = useRef(isMobile);
   const touchSteerRef = useRef({ left: false, right: false });
   const touchFireRef = useRef(false);
+  const touchBrakeRef = useRef(false);
+  const toastTimerRef = useRef<number | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [cash, setCash] = useState(1500);
   const [speedKmh, setSpeedKmh] = useState(0);
@@ -444,9 +448,14 @@ export default function App() {
   }, [callsign]);
 
   useEffect(() => {
+    if (isMobile) isMobileRef.current = true;
+  }, [isMobile]);
+
+  useEffect(() => {
     const mq = window.matchMedia('(pointer: coarse)');
     const apply = () => {
-      const mobile = mq.matches || window.innerWidth < 900;
+      const touch = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+      const mobile = mq.matches || (touch && window.innerWidth <= 1024) || window.innerWidth < 768;
       isMobileRef.current = mobile;
       setIsMobile(mobile);
     };
@@ -526,7 +535,9 @@ export default function App() {
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    const ms = isMobileRef.current ? 420 : 1800;
+    toastTimerRef.current = window.setTimeout(() => setToastMessage(null), ms);
   }, []);
 
   // --------------------------------------------------------------------------
@@ -615,8 +626,13 @@ export default function App() {
     setWeaponCooldownMs(wCfg.cooldownMs);
 
     const loc = localStateRef.current;
-    const heading = fireHeadingRef.current || loc.heading + aimYawRef.current;
-    const muzzle = muzzleWorld(localVehicleBundleRef.current);
+    const heading = Number.isFinite(fireHeadingRef.current)
+      ? fireHeadingRef.current
+      : loc.heading + aimYawRef.current;
+    const muzzleRaw = muzzleWorld(localVehicleBundleRef.current);
+    const muzzleOk =
+      muzzleRaw && Number.isFinite(muzzleRaw.x) && Math.hypot(muzzleRaw.x - loc.x, muzzleRaw.z - loc.z) < 6;
+    const muzzle = muzzleOk ? muzzleRaw : null;
     const remaining = Math.max(0, ammoRef.current - 1);
     ammoRef.current = remaining;
     setAmmo(remaining);
@@ -1549,8 +1565,9 @@ export default function App() {
       const keys = keysRef.current;
       const mobileDrive = isMobileRef.current;
       const touch = touchSteerRef.current;
-      const up = keys['ArrowUp'] || keys['KeyW'] || mobileDrive;
-      const dn = mobileDrive ? false : keys['ArrowDown'] || keys['KeyS'];
+      const braking = touchBrakeRef.current;
+      const up = keys['ArrowUp'] || keys['KeyW'] || (mobileDrive && !braking);
+      const dn = keys['ArrowDown'] || keys['KeyS'] || braking;
       const lf = keys['ArrowLeft'] || keys['KeyA'] || touch.left;
       const rt = keys['ArrowRight'] || keys['KeyD'] || touch.right;
       const space = !!keys['Space'] || touchFireRef.current;
@@ -1605,7 +1622,7 @@ export default function App() {
           if (clashTimeoutRef.current) clearTimeout(clashTimeoutRef.current);
           clashTimeoutRef.current = setTimeout(() => {
             setClashNotification(null);
-          }, 3500);
+          }, isMobileRef.current ? 350 : 1800);
         };
         const bumpSpeed = (factor: number) => {
           if (loc.speed < -0.15) loc.speed *= 0.55;
@@ -1771,7 +1788,7 @@ export default function App() {
             const pkt: PlayerInputPacket = {
               seq: inputSeqRef.current,
               steer: loc.steerAngle,
-              throttle: up || mobileDrive ? 1 : 0,
+              throttle: up ? 1 : 0,
               brake: dn ? 1 : 0,
               handbrake: !!(keys['ControlLeft'] || keys['ControlRight']),
               fire: false,
@@ -1937,7 +1954,7 @@ export default function App() {
       }
 
       let closest: WorldWeaponPickup | null = null;
-      let closestD = 8.5 * 8.5;
+      let closestD = (isMobileRef.current ? 11 : 8.5) ** 2;
       for (const p of livePickups) {
         if (p.active === false) continue;
         const dx = p.x - loc.x;
@@ -1953,7 +1970,7 @@ export default function App() {
         setNearbyPickup(closest);
       }
       const nowMs = performance.now();
-      if (closest && closestD <= 8 * 8) {
+      if (closest && closestD <= (isMobileRef.current ? 11 : 8) ** 2) {
         const due = autoPickupSentRef.current !== closest.id || nowMs - (autoPickupAtRef.current || 0) > 120;
         if (due && ws.readyState === WebSocket.OPEN) {
           autoPickupSentRef.current = closest.id;
@@ -2604,7 +2621,7 @@ export default function App() {
           )}
 
           {/* Clash Notification Banner */}
-          {clashNotification && (
+          {clashNotification && !isMobile && (
             <div className="absolute top-24 left-1/2 -translate-x-1/2 z-20 px-5 py-2.5 bg-slate-950/90 border border-cyan-400/80 rounded-xl shadow-2xl text-xs sm:text-sm font-bold text-cyan-300 font-['Outfit'] backdrop-blur-md pointer-events-none flex items-center gap-2 animate-bounce">
               <Sparkles className="w-4 h-4 text-cyan-400 animate-spin" />
               <span>{clashNotification}</span>
@@ -2613,7 +2630,11 @@ export default function App() {
 
           {/* Toast Notification */}
           {toastMessage && (
-            <div className="absolute top-36 left-1/2 -translate-x-1/2 z-30 px-6 py-2.5 bg-slate-900/95 border border-cyan-500/60 rounded-xl shadow-2xl text-sm font-bold text-white font-['Outfit'] backdrop-blur-md pointer-events-none animate-fade-in-down">
+            <div
+              className={`absolute left-1/2 -translate-x-1/2 z-30 bg-slate-900/90 border border-amber-400/50 rounded-lg shadow-lg text-white font-['Outfit'] pointer-events-none ${
+                isMobile ? 'top-12 max-w-[70vw] px-3 py-1 text-[11px] font-bold' : 'top-36 px-6 py-2.5 text-sm font-bold'
+              }`}
+            >
               {toastMessage}
             </div>
           )}
@@ -2656,7 +2677,7 @@ export default function App() {
             </div>
           )}
 
-          {nearbyPickup && gameMode === 'free_roam' && (
+          {nearbyPickup && gameMode === 'free_roam' && !isMobile && (
             <div className={`absolute left-1/2 -translate-x-1/2 z-30 px-6 py-3 bg-slate-950/95 border border-amber-400/80 rounded-2xl shadow-2xl text-center font-['Outfit'] pointer-events-none ${isMobile ? 'bottom-40 max-w-[80vw] px-3 py-2' : 'bottom-36'}`}>
               <div className="text-amber-300 text-lg font-black tracking-wide">
                 DRIVE OVER TO COLLECT
@@ -3000,20 +3021,35 @@ export default function App() {
           {isMobile && isAlive && (
             <div className="absolute inset-x-0 bottom-0 z-40 px-4 pb-[max(10px,env(safe-area-inset-bottom))] pt-6 bg-gradient-to-t from-slate-950/80 to-transparent pointer-events-none">
               <div className="flex items-end justify-between gap-4">
-                <div className="flex gap-3 pointer-events-auto">
+                <div className="flex gap-2 pointer-events-auto items-end">
                   <MobileHoldButton
-                    label={<ChevronLeft className="w-10 h-10" />}
+                    label={<ChevronLeft className="w-9 h-9" />}
                     onHoldChange={held => {
                       touchSteerRef.current.left = held;
+                      isMobileRef.current = true;
                     }}
-                    className="w-[76px] h-[76px] rounded-2xl bg-slate-900/90 border-2 border-white/20 text-white flex items-center justify-center shadow-xl active:bg-cyan-500 active:text-slate-950"
+                    className="w-[68px] h-[68px] rounded-2xl bg-slate-900/90 border-2 border-white/20 text-white flex items-center justify-center shadow-xl active:bg-cyan-500 active:text-slate-950"
                   />
                   <MobileHoldButton
-                    label={<ChevronRight className="w-10 h-10" />}
+                    label={
+                      <span className="flex flex-col items-center leading-none">
+                        <Square className="w-5 h-5 mb-1 fill-current" />
+                        <span className="text-[10px] font-black tracking-widest">BRAKE</span>
+                      </span>
+                    }
+                    onHoldChange={held => {
+                      touchBrakeRef.current = held;
+                      isMobileRef.current = true;
+                    }}
+                    className="w-[68px] h-[68px] rounded-2xl bg-red-950/90 border-2 border-red-400/70 text-red-200 flex items-center justify-center shadow-xl active:bg-red-500 active:text-white"
+                  />
+                  <MobileHoldButton
+                    label={<ChevronRight className="w-9 h-9" />}
                     onHoldChange={held => {
                       touchSteerRef.current.right = held;
+                      isMobileRef.current = true;
                     }}
-                    className="w-[76px] h-[76px] rounded-2xl bg-slate-900/90 border-2 border-white/20 text-white flex items-center justify-center shadow-xl active:bg-cyan-500 active:text-slate-950"
+                    className="w-[68px] h-[68px] rounded-2xl bg-slate-900/90 border-2 border-white/20 text-white flex items-center justify-center shadow-xl active:bg-cyan-500 active:text-slate-950"
                   />
                 </div>
                 <MobileHoldButton

@@ -30,6 +30,7 @@ import {
   MATCH_INTERMISSION_SEC,
   PLAYER_RESPAWN_SEC,
   STREET_WEAPON_ORDER,
+  STREET_WORLD_SPAWN_MIX,
   StreetWeaponType,
   WorldWeaponPickup,
   WORLD_WEAPON_SPAWNS,
@@ -272,6 +273,15 @@ export class RoomManager {
               });
               if (!combat.inventory) combat.inventory = {};
               if (typeof combat.deaths !== 'number') combat.deaths = 0;
+              const leftoverBat = combat.inventory.bat || 0;
+              if (leftoverBat > 0) {
+                combat.inventory.shotgun = (combat.inventory.shotgun || 0) + leftoverBat;
+                delete combat.inventory.bat;
+                if (combat.weapon === 'bat') {
+                  combat.weapon = 'shotgun';
+                  combat.ammo = combat.inventory.shotgun;
+                }
+              }
 
               const client: ConnectedClient = {
                 ws,
@@ -461,6 +471,7 @@ export class RoomManager {
                 heading: Number.isFinite(Number(msg.heading)) ? Number(msg.heading) : client.state.heading,
                 clientTime: Number(msg.clientTime) || Date.now(),
                 lockTargetId: typeof msg.lockTargetId === 'string' ? msg.lockTargetId : undefined,
+                weapon: typeof msg.weapon === 'string' ? msg.weapon : undefined,
               };
               this.tryFireWeapon(client, shot);
               break;
@@ -805,6 +816,7 @@ export class RoomManager {
       mz?: number;
       clientTime?: number;
       lockTargetId?: string;
+      weapon?: string;
     }
   ) {
     if (!client || !client.combat.isAlive) return;
@@ -812,12 +824,24 @@ export class RoomManager {
       if (!client.inMatch || this.matchState.state !== 'active') return;
     }
 
+    if (shot?.weapon && (client.combat.inventory[shot.weapon as WeaponType] || 0) > 0) {
+      client.combat.weapon = shot.weapon as WeaponType;
+      client.combat.ammo = client.combat.inventory[shot.weapon as WeaponType] || 0;
+    }
+
     if (client.combat.weapon === 'pipe' || (client.combat.inventory.pipe || 0) > 0) {
       const pipeAmmo = client.combat.inventory.pipe || 0;
       delete client.combat.inventory.pipe;
-      client.combat.inventory.bat = (client.combat.inventory.bat || 0) + pipeAmmo;
-      if (client.combat.weapon === 'pipe') client.combat.weapon = 'bat';
-      client.combat.ammo = client.combat.inventory[client.combat.weapon || 'bat'] || 0;
+      client.combat.inventory.shotgun = (client.combat.inventory.shotgun || 0) + pipeAmmo;
+      if (client.combat.weapon === 'pipe' || client.combat.weapon === 'bat') client.combat.weapon = 'shotgun';
+      client.combat.ammo = client.combat.inventory[client.combat.weapon || 'shotgun'] || 0;
+    }
+    const leftoverBat = client.combat.inventory.bat || 0;
+    if (leftoverBat > 0) {
+      client.combat.inventory.shotgun = (client.combat.inventory.shotgun || 0) + leftoverBat;
+      delete client.combat.inventory.bat;
+      if (client.combat.weapon === 'bat') client.combat.weapon = 'shotgun';
+      client.combat.ammo = client.combat.inventory[client.combat.weapon || 'shotgun'] || 0;
     }
     const wType = client.combat.weapon;
     if (!wType) return;
@@ -1104,7 +1128,7 @@ export class RoomManager {
     this.worldPickups = WORLD_WEAPON_SPAWNS.map((spot, slot) => ({
       id: `spawn_${slot}`,
       slot,
-      weapon: STREET_WEAPON_ORDER[slot % STREET_WEAPON_ORDER.length],
+      weapon: STREET_WORLD_SPAWN_MIX[slot % STREET_WORLD_SPAWN_MIX.length],
       x: spot.x,
       y: 0.08,
       z: spot.z,
@@ -1247,7 +1271,7 @@ export class RoomManager {
       const dx = pose.x - x;
       const dz = pose.z - z;
       const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist > range || dist < 0.2) continue;
+      if (dist > range || dist < 0.05) continue;
       const dot = (dx * fx + dz * fz) / dist;
       if (dot < minDot) continue;
       const scaled =
@@ -1262,7 +1286,7 @@ export class RoomManager {
       const dx = b.state.x - x;
       const dz = b.state.z - z;
       const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist > range || dist < 0.2) continue;
+      if (dist > range || dist < 0.05) continue;
       const dot = (dx * fx + dz * fz) / dist;
       if (dot < minDot) continue;
       const scaled =
@@ -1277,7 +1301,7 @@ export class RoomManager {
       const dx = bot.x - x;
       const dz = bot.z - z;
       const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist > range || dist < 0.2) continue;
+      if (dist > range || dist < 0.05) continue;
       const dot = (dx * fx + dz * fz) / dist;
       if (dot < minDot) continue;
       const scaled =
@@ -1378,7 +1402,7 @@ export class RoomManager {
       const dx = pose.x - x;
       const dz = pose.z - z;
       const along = dx * fx + dz * fz;
-      if (along < 0.25 || along > range) continue;
+      if (along < -1.8 || along > range) continue;
       const perp = Math.abs(dx * fz - dz * fx);
       if (perp > radius) continue;
       if (along < bestDist) {
@@ -1393,7 +1417,7 @@ export class RoomManager {
       const dx = b.state.x - x;
       const dz = b.state.z - z;
       const along = dx * fx + dz * fz;
-      if (along < 0.25 || along > range) continue;
+      if (along < -1.8 || along > range) continue;
       const perp = Math.abs(dx * fz - dz * fx);
       if (perp > radius) continue;
       if (along < bestDist) {
@@ -1408,7 +1432,7 @@ export class RoomManager {
       const dx = bot.x - x;
       const dz = bot.z - z;
       const along = dx * fx + dz * fz;
-      if (along < 0.25 || along > range) continue;
+      if (along < -1.8 || along > range) continue;
       const perp = Math.abs(dx * fz - dz * fx);
       if (perp > radius) continue;
       if (along < bestDist) {
@@ -1442,8 +1466,14 @@ export class RoomManager {
     const now = Date.now();
     const forwardX = Math.sin(heading);
     const forwardZ = Math.cos(heading);
-    const muzzleX = muzzleOverrideX ?? originX + forwardX * 2.2;
-    const muzzleZ = muzzleOverrideZ ?? originZ + forwardZ * 2.2;
+    const muzzleFar =
+      typeof muzzleOverrideX === 'number' &&
+      typeof muzzleOverrideZ === 'number' &&
+      Math.hypot(muzzleOverrideX - originX, muzzleOverrideZ - originZ) > 8;
+    const muzzleX = !muzzleFar && typeof muzzleOverrideX === 'number' ? muzzleOverrideX : originX + forwardX * 2.2;
+    const muzzleZ = !muzzleFar && typeof muzzleOverrideZ === 'number' ? muzzleOverrideZ : originZ + forwardZ * 2.2;
+    const scanX = originX;
+    const scanZ = originZ;
     const lag = Number.isFinite(clientTime) ? now - (clientTime as number) : 90;
     const rewindAt = now - Math.max(40, Math.min(180, lag));
 
@@ -1459,13 +1489,13 @@ export class RoomManager {
         this.applyForwardCone(
           attacker.playerId,
           attacker.name,
-          muzzleX,
-          muzzleZ,
+          scanX,
+          scanZ,
           heading,
           range,
           WEAPON_CONFIGS.kangri.damage,
           wType,
-          0.82,
+          0.55,
           rewindAt
         );
         this.broadcast({
@@ -1485,13 +1515,13 @@ export class RoomManager {
         this.applyHitscan(
           attacker.playerId,
           attacker.name,
-          muzzleX,
-          muzzleZ,
+          scanX,
+          scanZ,
           heading,
           cfg.range || 28,
           cfg.damage,
           wType,
-          wType === 'rifle' ? 4.4 : 4.8,
+          wType === 'rifle' ? 6.2 : 6.8,
           rewindAt
         );
         break;
@@ -1503,13 +1533,13 @@ export class RoomManager {
           this.applyHitscan(
             attacker.playerId,
             attacker.name,
-            muzzleX,
-            muzzleZ,
+            scanX,
+            scanZ,
             heading + ang,
             WEAPON_CONFIGS.shotgun.range || 16,
             pelletDmg[i],
             'shotgun',
-            2.6,
+            3.8,
             rewindAt
           );
         });
@@ -1519,13 +1549,13 @@ export class RoomManager {
         this.applyHitscan(
           attacker.playerId,
           attacker.name,
-          muzzleX,
-          muzzleZ,
+          scanX,
+          scanZ,
           heading,
           38,
           WEAPON_CONFIGS.machinegun.damage,
           'machinegun',
-          4.4,
+          6.2,
           rewindAt
         );
         break;

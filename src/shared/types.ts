@@ -157,14 +157,31 @@ export type WeaponType =
   | 'rifle'
   | 'kangri';
 
-export type StreetWeaponType = 'bat' | 'pistol' | 'shotgun' | 'rifle' | 'kangri';
+export type StreetWeaponType = 'pistol' | 'shotgun' | 'rifle' | 'kangri';
 
 export const STREET_WEAPON_ORDER: StreetWeaponType[] = [
-  'bat',
   'pistol',
   'shotgun',
   'rifle',
   'kangri',
+];
+
+/** Boulevard ground mix: no bats; extra shotgun / rifle / kangri. */
+export const STREET_WORLD_SPAWN_MIX: StreetWeaponType[] = [
+  'shotgun',
+  'rifle',
+  'kangri',
+  'shotgun',
+  'rifle',
+  'kangri',
+  'shotgun',
+  'rifle',
+  'kangri',
+  'shotgun',
+  'rifle',
+  'kangri',
+  'pistol',
+  'shotgun',
 ];
 
 export const WEAPON_SLOT_ORDER: WeaponType[] = [
@@ -178,7 +195,7 @@ export const WEAPON_SLOT_ORDER: WeaponType[] = [
   'homing',
 ];
 
-export const MAX_WORLD_PICKUPS = 8;
+export const MAX_WORLD_PICKUPS = 11;
 export const WORLD_SLOT_RESPAWN_SEC = 30;
 export const WORLD_SPAWN_MIN_SEC = 30;
 export const WORLD_SPAWN_MAX_SEC = 60;
