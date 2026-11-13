@@ -24,6 +24,7 @@ export interface ArenaManager {
   triggerExplosionFX: (x: number, z: number, weaponType: WeaponType, radius?: number) => void;
   triggerEmpShockwaveFX: (x: number, z: number, radius: number) => void;
   triggerKangriBurstFX: (x: number, z: number, heading?: number) => void;
+  triggerKangriBurnFX: (x: number, z: number, wreck?: boolean) => void;
   triggerMuzzleFlash: (x: number, z: number, heading: number, weaponType: WeaponType) => void;
   triggerMeleeArc: (x: number, z: number, heading: number, weaponType: WeaponType) => void;
   triggerImpactSparks: (x: number, z: number) => void;
@@ -483,15 +484,15 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
   function triggerKangriBurstFX(x: number, z: number, heading = 0) {
     const fx = Math.sin(heading);
     const fz = Math.cos(heading);
-    [-0.16, -0.08, 0, 0.08, 0.16].forEach(ang => {
-      spawnFlyingBolt(x, z, heading + ang, 26, 0.55, ang === 0 ? 0xff6a1a : 0xfacc15, 0.09, 0.85);
+    [-0.32, -0.22, -0.12, -0.04, 0, 0.04, 0.12, 0.22, 0.32].forEach(ang => {
+      spawnFlyingBolt(x, z, heading + ang, 32, 0.7, ang === 0 ? 0xff4500 : 0xfacc15, 0.11, 1.05);
     });
     const coneGroup = new THREE.Group();
-    coneGroup.position.set(x + fx * 4.8, 0.95, z + fz * 4.8);
+    coneGroup.position.set(x + fx * 5.2, 0.95, z + fz * 5.2);
     coneGroup.rotation.y = heading;
     const cone = new THREE.Mesh(
-      new THREE.ConeGeometry(2.1, 9.5, 10, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0xfb923c, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+      new THREE.ConeGeometry(2.8, 12.5, 12, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xff6a1a, transparent: true, opacity: 0.48, side: THREE.DoubleSide })
     );
     cone.rotation.x = Math.PI / 2;
     coneGroup.add(cone);
@@ -502,9 +503,9 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
       update: dt => {
         coneAge += dt;
         const mat = cone.material as THREE.MeshBasicMaterial;
-        mat.opacity = Math.max(0, 0.38 * (1 - coneAge / 0.35));
-        coneGroup.scale.setScalar(1 + coneAge * 1.4);
-        if (coneAge >= 0.35) {
+        mat.opacity = Math.max(0, 0.5 * (1 - coneAge / 0.45));
+        coneGroup.scale.setScalar(1 + coneAge * 1.8);
+        if (coneAge >= 0.45) {
           scene.remove(coneGroup);
           return true;
         }
@@ -526,7 +527,7 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.7, 16).rotateX(-Math.PI / 2), ringMat);
     g.add(ring);
     const sparks: THREE.Mesh[] = [];
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 18; i++) {
       const sm = new THREE.Mesh(
         new THREE.SphereGeometry(0.06, 5, 5),
         new THREE.MeshBasicMaterial({ color: i % 2 ? 0xfacc15 : 0xef4444 })
@@ -556,6 +557,65 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
         });
         if (age >= 0.55) {
           scene.remove(g);
+          return true;
+        }
+        return false;
+      },
+    });
+  }
+
+  function triggerKangriBurnFX(x: number, z: number, wreck = false) {
+    const g = new THREE.Group();
+    g.position.set(x, 0.15, z);
+    scene.add(g);
+    const duration = wreck ? 2.4 : 1.35;
+    const flames: THREE.Mesh[] = [];
+    const count = wreck ? 10 : 6;
+    for (let i = 0; i < count; i++) {
+      const h = 0.9 + Math.random() * (wreck ? 1.8 : 1.1);
+      const flame = new THREE.Mesh(
+        new THREE.ConeGeometry(0.22 + Math.random() * 0.18, h, 6),
+        new THREE.MeshBasicMaterial({
+          color: i % 2 ? 0xff6a1a : 0xfacc15,
+          transparent: true,
+          opacity: 0.9,
+        })
+      );
+      flame.position.set((Math.random() - 0.5) * 1.4, h * 0.45, (Math.random() - 0.5) * 1.4);
+      flame.userData.baseY = flame.position.y;
+      flame.userData.phase = Math.random() * Math.PI * 2;
+      g.add(flame);
+      flames.push(flame);
+    }
+    if (wreck) {
+      const glow = new THREE.Mesh(
+        new THREE.SphereGeometry(1.1, 10, 8),
+        new THREE.MeshBasicMaterial({ color: 0xea580c, transparent: true, opacity: 0.45 })
+      );
+      glow.position.y = 0.6;
+      g.add(glow);
+    }
+    let age = 0;
+    activeEffects.push({
+      group: g,
+      update: dt => {
+        age += dt;
+        const t = age / duration;
+        flames.forEach((f, i) => {
+          f.position.y = f.userData.baseY + Math.sin(age * 10 + f.userData.phase) * 0.12;
+          f.scale.setScalar(1 + Math.sin(age * 14 + i) * 0.18);
+          const mat = f.material as THREE.MeshBasicMaterial;
+          mat.opacity = Math.max(0, 0.9 * (1 - t));
+        });
+        if (age >= duration) {
+          scene.remove(g);
+          g.traverse(obj => {
+            const mesh = obj as THREE.Mesh;
+            if (mesh.geometry) mesh.geometry.dispose();
+            const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+            if (Array.isArray(mat)) mat.forEach(m => m.dispose());
+            else mat?.dispose();
+          });
           return true;
         }
         return false;
@@ -935,6 +995,7 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
     triggerExplosionFX,
     triggerEmpShockwaveFX,
     triggerKangriBurstFX,
+    triggerKangriBurnFX,
     triggerMuzzleFlash,
     triggerMeleeArc,
     triggerImpactSparks,

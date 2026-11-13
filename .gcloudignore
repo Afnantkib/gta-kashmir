@@ -1,0 +1,10 @@
+.git
+.cursor
+node_modules
+dist
+*.log
+.env
+.env.*
+!.env.example
+server_data
+.DS_Store

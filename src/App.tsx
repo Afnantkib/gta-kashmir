@@ -15,6 +15,7 @@ import {
   ArenaMatchState,
   DamageEvent,
   PresenceMetrics,
+  LiveScoreEntry,
   WEAPON_SLOT_ORDER,
   STREET_WEAPON_ORDER,
   WorldWeaponPickup,
@@ -198,6 +199,7 @@ import {
   playExplosionFX,
   playGrenadeLaunchFX,
   playFirecrackerFX,
+  playKangriFX,
   playEmpShockwaveFX,
   playHazardDropFX,
   playMissileLockWarningFX,
@@ -231,6 +233,60 @@ import {
   Skull,
 } from 'lucide-react';
 
+function LiveTopFive({
+  board,
+  localId,
+  className = '',
+}: {
+  board: LiveScoreEntry[];
+  localId: string;
+  className?: string;
+}) {
+  const top = board.slice(0, 5);
+  const me = board.find(row => row.playerId === localId);
+  const showSelf = !!me && me.rank > 5;
+  return (
+    <div
+      className={`pointer-events-none w-[172px] rounded-xl bg-slate-950/85 border border-amber-400/35 backdrop-blur-md px-2 py-1.5 shadow-xl ${className}`}
+    >
+      <div className="flex items-center justify-between text-[9px] font-black tracking-[0.14em] text-amber-300/90 mb-1">
+        <span className="flex items-center gap-1">
+          <Trophy className="w-3 h-3" /> TOP 5
+        </span>
+        <span className="font-mono text-slate-500 tracking-normal font-bold">K · SCORE</span>
+      </div>
+      {top.length === 0 ? (
+        <div className="text-[10px] text-slate-500 font-semibold">Waiting for players</div>
+      ) : (
+        top.map(row => {
+          const mine = row.playerId === localId;
+          return (
+            <div
+              key={row.playerId}
+              className={`flex items-center gap-1 text-[11px] leading-tight py-px ${
+                mine ? 'text-cyan-200' : 'text-slate-200'
+              }`}
+            >
+              <span className="w-3.5 font-mono text-amber-400/80">{row.rank}</span>
+              <span className="flex-1 truncate font-bold">{row.name}</span>
+              <span className="font-mono tabular-nums text-rose-300">{row.kills}</span>
+              <span className="font-mono tabular-nums text-slate-400 w-8 text-right">{row.score}</span>
+            </div>
+          );
+        })
+      )}
+      {showSelf && me && (
+        <div className="mt-0.5 pt-0.5 border-t border-white/10 flex items-center gap-1 text-[11px] leading-tight text-cyan-200">
+          <span className="w-3.5 font-mono text-amber-400/80">{me.rank}</span>
+          <span className="flex-1 truncate font-bold">{me.name}</span>
+          <span className="font-mono tabular-nums text-rose-300">{me.kills}</span>
+          <span className="font-mono tabular-nums text-slate-400 w-8 text-right">{me.score}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const mountRef = useRef<HTMLDivElement>(null);
   const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -245,6 +301,8 @@ export default function App() {
   const [unlockedVehicles, setUnlockedVehicles] = useState<VehicleCategory[]>(['auto', 'taxi', 'police', 'bike']);
   const [isGarageOpen, setIsGarageOpen] = useState(false);
   const [connectedPlayersCount, setConnectedPlayersCount] = useState(0);
+  const [liveScoreboard, setLiveScoreboard] = useState<LiveScoreEntry[]>([]);
+  const liveScoreboardKeyRef = useRef('');
   const [presence, setPresence] = useState<PresenceMetrics>({
     online: 0,
     inRoom: 0,
@@ -287,6 +345,7 @@ export default function App() {
   const [respawnCountdown, setRespawnCountdown] = useState(0);
   const [missileWarning, setMissileWarning] = useState(false);
   const [redHitFlash, setRedHitFlash] = useState(false);
+  const [fireHitFlash, setFireHitFlash] = useState(false);
 
   const [boostCooldownTimer, setBoostCooldownTimer] = useState(0);
   const [dodgeCooldownTimer, setDodgeCooldownTimer] = useState(0);
@@ -497,7 +556,8 @@ export default function App() {
     lastLocalFxRef.current = now;
     if (wType === 'pistol' || wType === 'rifle' || wType === 'shotgun' || wType === 'machinegun') playMachineGunFX();
     else if (wType === 'bat' || wType === 'pipe') playCrashFX();
-    else if (wType === 'kangri' || wType === 'firecracker') playFirecrackerFX();
+    else if (wType === 'kangri') playKangriFX();
+    else if (wType === 'firecracker') playFirecrackerFX();
     else if (wType === 'rocket' || wType === 'homing') playRocketLaunchFX();
     else if (wType === 'grenade') playGrenadeLaunchFX();
     else if (wType === 'emp') playEmpShockwaveFX();
@@ -965,6 +1025,15 @@ export default function App() {
             setPresence(msg.presence);
             setConnectedPlayersCount(msg.presence.online);
           }
+          if (Array.isArray(msg.scoreboard)) {
+            const key = (msg.scoreboard as LiveScoreEntry[])
+              .map(r => `${r.playerId}:${r.score}:${r.kills}:${r.deaths}`)
+              .join('|');
+            if (key !== liveScoreboardKeyRef.current) {
+              liveScoreboardKeyRef.current = key;
+              setLiveScoreboard(msg.scoreboard);
+            }
+          }
           const me = (msg.players as PlayerServerState[] | undefined)?.find(p => p.id === playerIdRef.current);
           if (me) {
             localStateRef.current.x = me.x;
@@ -979,6 +1048,15 @@ export default function App() {
             setConnectedPlayersCount(msg.presence.online);
           } else {
             setConnectedPlayersCount(players.filter(p => !p.isNpc).length);
+          }
+          if (Array.isArray(msg.scoreboard)) {
+            const key = (msg.scoreboard as LiveScoreEntry[])
+              .map(r => `${r.playerId}:${r.score}:${r.kills}:${r.deaths}`)
+              .join('|');
+            if (key !== liveScoreboardKeyRef.current) {
+              liveScoreboardKeyRef.current = key;
+              setLiveScoreboard(msg.scoreboard);
+            }
           }
 
           if (msg.crates) serverCratesRef.current = msg.crates;
@@ -1170,7 +1248,7 @@ export default function App() {
             const held = ownerBundle?.root.userData.heldMesh as THREE.Object3D | undefined;
             if (held) held.userData.swing = 0.01;
           } else if (fired === 'kangri') {
-            playFirecrackerFX();
+            playKangriFX();
             fx?.spawnDischargedShot(
               fired,
               Number.isFinite(Number(msg.mx)) ? Number(msg.mx) : msg.x,
@@ -1211,14 +1289,32 @@ export default function App() {
           const ev: DamageEvent = msg.event;
           arenaManagerRef.current?.triggerDamageNumberFX(ev);
           arenaManagerRef.current?.triggerImpactSparks(ev.x, ev.z);
+          if (ev.weaponType === 'kangri') {
+            arenaManagerRef.current?.triggerKangriBurnFX(ev.x, ev.z, ev.isElimination);
+            if (ev.isElimination) {
+              playExplosionFX();
+              arenaManagerRef.current?.triggerExplosionFX(ev.x, ev.z, 'kangri', 7);
+            }
+          }
 
           if (ev.victimId === playerIdRef.current) {
-            setRedHitFlash(true);
-            setTimeout(() => setRedHitFlash(false), 260);
-            playCrashFX();
-            crashShakeRef.current = 0.55;
+            if (ev.weaponType === 'kangri') {
+              setFireHitFlash(true);
+              setTimeout(() => setFireHitFlash(false), 420);
+              playKangriFX();
+              crashShakeRef.current = 0.9;
+            } else {
+              setRedHitFlash(true);
+              setTimeout(() => setRedHitFlash(false), 260);
+              playCrashFX();
+              crashShakeRef.current = 0.55;
+            }
           } else if (ev.attackerId === playerIdRef.current) {
-            showToast(`${ev.isElimination ? 'ELIMINATED' : 'HIT'} ${ev.victimName} −${ev.amount} HP`);
+            showToast(
+              ev.weaponType === 'kangri'
+                ? `${ev.isElimination ? 'TORCHED' : 'SCORCHED'} ${ev.victimName} −${ev.amount}`
+                : `${ev.isElimination ? 'ELIMINATED' : 'HIT'} ${ev.victimName} −${ev.amount} HP`
+            );
           }
         } else if (msg.type === 'EXPLOSION') {
           playExplosionFX();
@@ -1228,7 +1324,7 @@ export default function App() {
             playEmpShockwaveFX();
             arenaManagerRef.current?.triggerEmpShockwaveFX(msg.x, msg.z, msg.radius || 14.0);
           } else if (msg.effect === 'kangri_burst') {
-            playFirecrackerFX();
+            playKangriFX();
             arenaManagerRef.current?.triggerKangriBurstFX(msg.x, msg.z, msg.heading || 0);
           }
         } else if (msg.type === 'PLAYER_ELIMINATED') {
@@ -2034,9 +2130,12 @@ export default function App() {
       {/* 3D WebGL Canvas Container */}
       <div ref={mountRef} className="absolute inset-0 w-full h-full" />
 
-      {/* Red Hit Flash Overlay */}
+      {/* Hit Flash Overlay */}
       {redHitFlash && (
         <div className="absolute inset-0 z-30 pointer-events-none bg-red-600/30 animate-pulse border-8 border-red-500/80" />
+      )}
+      {fireHitFlash && (
+        <div className="absolute inset-0 z-30 pointer-events-none bg-orange-500/35 animate-pulse border-8 border-orange-400/80" />
       )}
 
       {/* Incoming Missile Warning Banner */}
@@ -2053,6 +2152,9 @@ export default function App() {
       {/* Title & Start Screen */}
       {!hasStarted && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center p-6 bg-gradient-to-b from-slate-950/90 via-sky-950/85 to-slate-950/95 backdrop-blur-md">
+          <div className="absolute top-5 right-5 z-10">
+            <LiveTopFive board={liveScoreboard} localId={playerIdRef.current} />
+          </div>
           <div className="text-center max-w-xl space-y-4">
             <div className="inline-flex items-center gap-2 px-3 py-1 bg-amber-500/20 border border-amber-500/40 rounded-full text-amber-300 text-sm font-semibold tracking-wider uppercase">
               <Sparkles className="w-4 h-4 text-amber-400" /> Open-World 3D Srinagar & Battle Arena
@@ -2226,8 +2328,9 @@ export default function App() {
             </div>
           )}
 
-          {/* Top-Right: Quick Vehicle Switcher & Garage Button */}
-          <div className="absolute top-4 right-4 z-20 flex items-center gap-2 pointer-events-auto">
+          {/* Top-Right: Vehicle switcher, garage, compact live top 5 */}
+          <div className="absolute top-4 right-4 z-20 flex flex-col items-end gap-2">
+          <div className="flex items-center gap-2 pointer-events-auto">
             <div className="hidden md:flex items-center gap-1 bg-slate-950/80 border border-slate-700/70 p-1 rounded-xl backdrop-blur-md shadow-xl">
               <button
                 onClick={() => switchVehicle('auto')}
@@ -2284,9 +2387,10 @@ export default function App() {
             </button>
           </div>
 
-          {/* Top-Right Kill Feed (Battle Arena) */}
+          <LiveTopFive board={liveScoreboard} localId={playerIdRef.current} />
+
           {gameMode === 'battle_arena' && killFeed.length > 0 && (
-            <div className="absolute top-18 right-4 z-20 flex flex-col gap-1.5 pointer-events-none max-w-xs">
+            <div className="flex flex-col gap-1.5 pointer-events-none max-w-xs items-end">
               {killFeed.map(item => (
                 <div
                   key={item.id}
@@ -2298,6 +2402,7 @@ export default function App() {
               ))}
             </div>
           )}
+          </div>
 
           {/* Active Mission HUD Card (Free Roam) */}
           {activeMission && gameMode === 'free_roam' && (

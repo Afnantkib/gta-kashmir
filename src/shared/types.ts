@@ -415,11 +415,11 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponDefinition> = {
     id: 'kangri',
     name: 'Kashmiri Kangri',
     categoryName: 'Fire Pot',
-    description: 'Traditional wicker-and-clay kangri. Hurls a cone of embers that scorches vehicles.',
+    description: 'Hottest kangri on the boulevard. Two ember bursts cook a vehicle hull to scrap.',
     icon: '🔥',
-    damage: 22,
-    splashDamage: 10,
-    splashRadius: 3.2,
+    damage: 50,
+    splashDamage: 18,
+    splashRadius: 4.2,
     projectileSpeed: 18,
     cooldownMs: 1100,
     ammo: 8,
@@ -435,7 +435,7 @@ export const VEHICLE_DAMAGE_MULT: Record<WeaponType, number> = {
   rifle: 0.65,
   bat: 0.7,
   pipe: 0.9,
-  kangri: 1.05,
+  kangri: 1.0,
   machinegun: 0.5,
   rocket: 1.35,
   grenade: 1.2,
@@ -589,6 +589,16 @@ export interface PresenceMetrics {
   waiting: number;
   bots: number;
   connected: boolean;
+}
+
+export interface LiveScoreEntry {
+  playerId: string;
+  name: string;
+  kills: number;
+  deaths: number;
+  damageDealt: number;
+  score: number;
+  rank: number;
 }
 
 export interface ArenaMatchState {

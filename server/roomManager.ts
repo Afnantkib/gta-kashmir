@@ -21,6 +21,7 @@ import {
   ArenaMatchState,
   DamageEvent,
   MatchLeaderboardEntry,
+  LiveScoreEntry,
   PresenceMetrics,
   PICKUP_RESPAWN_SEC,
   MATCH_DURATION_SEC,
@@ -340,6 +341,7 @@ export class RoomManager {
                 worldPickups: this.worldPickups,
                 matchState: this.getPublicMatchState(),
                 presence: this.buildPresence(),
+                scoreboard: this.buildLiveScoreboard(),
                 chat: this.chatHistory.slice(-15),
               }));
 
@@ -734,6 +736,34 @@ export class RoomManager {
       if (b.kills !== a.kills) return b.kills - a.kills;
       if (a.deaths !== b.deaths) return a.deaths - b.deaths;
       if (b.damageDealt !== a.damageDealt) return b.damageDealt - a.damageDealt;
+      return a.name.localeCompare(b.name);
+    });
+    rows.forEach((r, i) => {
+      r.rank = i + 1;
+    });
+    return rows;
+  }
+
+  private buildLiveScoreboard(): LiveScoreEntry[] {
+    const rows: LiveScoreEntry[] = [];
+    for (const c of this.clients.values()) {
+      const kills = c.combat.kills || 0;
+      const deaths = c.combat.deaths || 0;
+      const damageDealt = c.combat.damageDealt || 0;
+      rows.push({
+        playerId: c.playerId,
+        name: c.name,
+        kills,
+        deaths,
+        damageDealt,
+        score: kills * 100 + damageDealt,
+        rank: 0,
+      });
+    }
+    rows.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.kills !== a.kills) return b.kills - a.kills;
+      if (a.deaths !== b.deaths) return a.deaths - b.deaths;
       return a.name.localeCompare(b.name);
     });
     rows.forEach((r, i) => {
@@ -1218,10 +1248,11 @@ export class RoomManager {
       if (dist > range || dist < 0.2) continue;
       const dot = (dx * fx + dz * fz) / dist;
       if (dot < minDot) continue;
-      const scaled = Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
+      const scaled =
+        wType === 'kangri' ? damage : Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
       this.dealDamageToPlayer(c, scaled, attackerId, attackerName, wType, c.state.x, c.state.z);
       if (wType === 'kangri') {
-        c.combat.speedPenaltyUntil = Date.now() + 2200;
+        c.combat.speedPenaltyUntil = Date.now() + 2800;
       }
     }
     for (const b of this.arenaBots.values()) {
@@ -1232,10 +1263,11 @@ export class RoomManager {
       if (dist > range || dist < 0.2) continue;
       const dot = (dx * fx + dz * fz) / dist;
       if (dot < minDot) continue;
-      const scaled = Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
+      const scaled =
+        wType === 'kangri' ? damage : Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
       this.dealDamageToBot(b, scaled, attackerId, attackerName, wType, b.state.x, b.state.z);
       if (wType === 'kangri') {
-        b.combat.speedPenaltyUntil = Date.now() + 2200;
+        b.combat.speedPenaltyUntil = Date.now() + 2800;
       }
     }
     for (const bot of this.bots.values()) {
@@ -1246,19 +1278,22 @@ export class RoomManager {
       if (dist > range || dist < 0.2) continue;
       const dot = (dx * fx + dz * fz) / dist;
       if (dot < minDot) continue;
-      const scaled = Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
+      const scaled =
+        wType === 'kangri' ? damage : Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
       this.hurtRoadBot(bot, scaled, attackerId, attackerName, wType);
     }
+  }
+
+  private hullDamage(wType: WeaponType, amount: number) {
+    if (wType === 'kangri') return 50;
+    return Math.round(amount * (VEHICLE_DAMAGE_MULT[wType] ?? 1));
   }
 
   private hurtRoadBot(bot: PlayerServerState, amount: number, attackerId: string, attackerName: string, wType: WeaponType) {
     if (!bot.combat) bot.combat = this.createCombatState();
     if (Date.now() < bot.combat.invulnerableUntil) return;
     bot.combat.health = Math.max(0, bot.combat.health - amount);
-    bot.combat.vehicleHealth = Math.max(
-      0,
-      (bot.combat.vehicleHealth ?? 100) - Math.round(amount * (VEHICLE_DAMAGE_MULT[wType] ?? 1))
-    );
+    bot.combat.vehicleHealth = Math.max(0, (bot.combat.vehicleHealth ?? 100) - this.hullDamage(wType, amount));
     const attacker = this.clients.get(attackerId);
     if (attacker) attacker.combat.damageDealt += amount;
     const dead = bot.combat.health <= 0 || bot.combat.vehicleHealth <= 0;
@@ -2347,7 +2382,7 @@ export class RoomManager {
     }
 
     victim.combat.health = Math.max(0, victim.combat.health - dmgRemaining);
-    const hull = Math.round(amount * (VEHICLE_DAMAGE_MULT[wType] ?? 1));
+    const hull = this.hullDamage(wType, amount);
     victim.combat.vehicleHealth = Math.max(0, (victim.combat.vehicleHealth ?? 100) - hull);
     const isElim = victim.combat.health <= 0 || victim.combat.vehicleHealth <= 0;
 
@@ -2451,7 +2486,7 @@ export class RoomManager {
     }
 
     victim.combat.health = Math.max(0, victim.combat.health - dmgRemaining);
-    const hull = Math.round(amount * (VEHICLE_DAMAGE_MULT[wType] ?? 1));
+    const hull = this.hullDamage(wType, amount);
     victim.combat.vehicleHealth = Math.max(0, (victim.combat.vehicleHealth ?? 100) - hull);
     const isElim = victim.combat.health <= 0 || victim.combat.vehicleHealth <= 0;
 
@@ -2560,6 +2595,7 @@ export class RoomManager {
       hazards: Array.from(this.hazards.values()),
       matchState: this.getPublicMatchState(),
       presence: this.buildPresence(),
+      scoreboard: this.buildLiveScoreboard(),
     });
 
     for (const client of this.clients.values()) {
