@@ -430,9 +430,9 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponDefinition> = {
   },
   kangri: {
     id: 'kangri',
-    name: 'Kashmiri Kangri',
+    name: 'Kangir',
     categoryName: 'Fire Pot',
-    description: 'Hottest kangri on the boulevard. Two ember bursts cook a vehicle hull to scrap.',
+    description: 'Hottest kangir on the boulevard. Two ember bursts cook a vehicle hull to scrap.',
     icon: '🔥',
     damage: 50,
     splashDamage: 18,

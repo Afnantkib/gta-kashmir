@@ -28,25 +28,29 @@ import { buildSrinagarWorld, WorldObjects } from './game/world.ts';
 import { buildBattleArena, ArenaManager } from './game/arena.ts';
 import { createWorldPickupMesh, createWeaponMesh, updatePickupVisual } from './game/weaponModels.ts';
 
-function makeNametagSprite(name: string, isNpc: boolean) {
+function makeNametagSprite(name: string, isNpc: boolean, health = 100, vehicleHealth = 100) {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
-  canvas.height = 64;
+  canvas.height = 96;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = isNpc ? 'rgba(20, 64, 38, 0.82)' : 'rgba(80, 12, 12, 0.9)';
-  ctx.fillRect(0, 0, 256, 64);
-  if (!isNpc) {
-    ctx.strokeStyle = 'rgba(248, 113, 113, 0.95)';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(2, 2, 252, 60);
-  }
+  const hull = Math.max(0, Math.min(100, Math.round(vehicleHealth)));
+  const hp = Math.max(0, Math.min(100, Math.round(health)));
+  ctx.fillStyle = isNpc ? 'rgba(20, 64, 38, 0.88)' : 'rgba(80, 12, 12, 0.92)';
+  ctx.fillRect(0, 0, 256, 96);
+  ctx.strokeStyle = hull > 60 ? 'rgba(74, 222, 128, 0.95)' : hull > 30 ? 'rgba(251, 191, 36, 0.95)' : 'rgba(248, 113, 113, 0.95)';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, 252, 92);
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 22px Outfit, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText((name || 'Driver').slice(0, 16), 128, 28);
-  ctx.fillStyle = isNpc ? '#86efac' : '#f87171';
-  ctx.font = 'bold 13px Outfit, sans-serif';
-  ctx.fillText(isNpc ? 'AI BOT' : 'PLAYER', 128, 50);
+  ctx.fillText((name || 'Driver').slice(0, 16), 128, 30);
+  ctx.fillStyle = hull > 60 ? '#86efac' : hull > 30 ? '#fcd34d' : '#fca5a5';
+  ctx.font = 'bold 16px Outfit, sans-serif';
+  ctx.fillText(`${isNpc ? 'AI' : 'PLAYER'}  HP ${hp}`, 128, 54);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+  ctx.fillRect(28, 68, 200, 10);
+  ctx.fillStyle = hull > 60 ? '#4ade80' : hull > 30 ? '#fbbf24' : '#ef4444';
+  ctx.fillRect(28, 68, 200 * (hull / 100), 10);
   const tex = new THREE.CanvasTexture(canvas);
   const mat = new THREE.SpriteMaterial({
     map: tex,
@@ -56,9 +60,9 @@ function makeNametagSprite(name: string, isNpc: boolean) {
   });
   const sprite = new THREE.Sprite(mat);
   sprite.renderOrder = 12;
-  sprite.scale.set(isNpc ? 4.4 : 5.2, isNpc ? 1.1 : 1.25, 1);
-  sprite.position.y = isNpc ? 3.15 : 3.45;
-  sprite.userData.tagKey = `${name}|${isNpc}|red`;
+  sprite.scale.set(isNpc ? 4.6 : 5.4, isNpc ? 1.72 : 1.9, 1);
+  sprite.position.y = isNpc ? 3.35 : 3.7;
+  sprite.userData.tagKey = `${name}|${isNpc}|${hp}|${hull}`;
   return sprite;
 }
 
@@ -1160,9 +1164,9 @@ export default function App() {
         rMesh.body.frustumCulled = false;
         rMesh.root.visible = true;
         rMesh.root.scale.set(1, 1, 1);
-        const tag = makeNametagSprite(p.name, isNpc);
+        const tag = makeNametagSprite(p.name, isNpc, hp, vehHp);
         rMesh.root.add(tag);
-        rMesh.root.userData.tagKey = `${p.name}|${isNpc}|red`;
+        rMesh.root.userData.tagKey = `${p.name}|${isNpc}|${Math.round(hp)}|${Math.round(vehHp)}`;
         nametagSpritesRef.current.set(p.id, tag);
         if (!isNpc) {
           const disc = new THREE.Mesh(
@@ -1185,11 +1189,16 @@ export default function App() {
         const live = remoteVehicleBundlesRef.current.get(p.id)!;
         live.root.visible = true;
         live.root.frustumCulled = false;
-        const tagKey = `${p.name}|${isNpc}|red`;
+        const tagKey = `${p.name}|${isNpc}|${Math.round(hp)}|${Math.round(vehHp)}`;
         if (live.root.userData.tagKey !== tagKey) {
           const prev = nametagSpritesRef.current.get(p.id);
-          if (prev) live.root.remove(prev);
-          const tag = makeNametagSprite(p.name, isNpc);
+          if (prev) {
+            live.root.remove(prev);
+            const prevMat = prev.material as THREE.SpriteMaterial;
+            prevMat.map?.dispose();
+            prevMat.dispose();
+          }
+          const tag = makeNametagSprite(p.name, isNpc, hp, vehHp);
           live.root.add(tag);
           nametagSpritesRef.current.set(p.id, tag);
           live.root.userData.tagKey = tagKey;
@@ -1463,6 +1472,11 @@ export default function App() {
           }
         } else if (msg.type === 'DAMAGE_EVENT') {
           const ev: DamageEvent = msg.event;
+          const struck = remoteVehicleBundlesRef.current.get(ev.victimId);
+          if (struck) {
+            ev.x = struck.root.position.x;
+            ev.z = struck.root.position.z;
+          }
           arenaManagerRef.current?.triggerDamageNumberFX(ev);
           arenaManagerRef.current?.triggerImpactSparks(ev.x, ev.z);
           if (ev.weaponType === 'kangri') {
@@ -1473,15 +1487,15 @@ export default function App() {
             }
           }
 
-          const rammed = remoteTargetsRef.current.get(ev.victimId);
-          if (rammed && ev.weaponType === 'ram') {
-            rammed.health = Math.max(0, (rammed.health ?? 100) - ev.amount);
-            rammed.vehicleHealth = Math.max(0, (rammed.vehicleHealth ?? 100) - ev.amount);
-            if (ev.isElimination || rammed.vehicleHealth <= 0 || rammed.health <= 0) {
-              rammed.isAlive = false;
-              rammed.health = 0;
-              rammed.vehicleHealth = 0;
-              rammed.speed = 0;
+          const struckState = remoteTargetsRef.current.get(ev.victimId);
+          if (struckState && ev.victimId !== playerIdRef.current) {
+            struckState.health = Math.max(0, (struckState.health ?? 100) - ev.amount);
+            struckState.vehicleHealth = Math.max(0, (struckState.vehicleHealth ?? 100) - ev.amount);
+            if (ev.isElimination || struckState.vehicleHealth <= 0 || struckState.health <= 0) {
+              struckState.isAlive = false;
+              struckState.health = 0;
+              struckState.vehicleHealth = 0;
+              struckState.speed = 0;
             }
           }
 
@@ -1839,7 +1853,7 @@ export default function App() {
           bundle.root.visible = true;
           setVehicleWrecked(bundle, false);
           const hull = localHullRef.current;
-          setVehicleHurt(bundle, hull < 35 ? 2 : hull < 75 ? 1 : 0);
+          setVehicleHurt(bundle, hull < 45 ? 2 : hull < 100 ? 1 : 0);
           ensureHeldWeapon(bundle, equippedWeaponRef.current);
           const held = bundle.root.userData.heldMesh as THREE.Object3D | undefined;
           if (!isAimingRef.current) {
@@ -1947,7 +1961,7 @@ export default function App() {
           if (dead) setVehicleHurt(bundle, 0);
           else {
             const hull = target.vehicleHealth ?? 100;
-            setVehicleHurt(bundle, hull < 35 ? 2 : hull < 75 ? 1 : 0);
+            setVehicleHurt(bundle, hull < 45 ? 2 : hull < 100 ? 1 : 0);
           }
           ensureHeldWeapon(bundle, target.isAlive === false ? null : target.weapon || null);
           const held = bundle.root.userData.heldMesh as THREE.Object3D | undefined;

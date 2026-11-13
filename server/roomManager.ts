@@ -835,9 +835,6 @@ export class RoomManager {
     }
   ) {
     if (!client || !client.combat.isAlive) return;
-    if (client.mode === 'battle_arena') {
-      if (!client.inMatch || this.matchState.state !== 'active') return;
-    }
 
     if (shot?.weapon && (client.combat.inventory[shot.weapon as WeaponType] || 0) > 0) {
       client.combat.weapon = shot.weapon as WeaponType;
@@ -1265,6 +1262,14 @@ export class RoomManager {
     return true;
   }
 
+  private canDamage(attackerId: string, kind: 'player' | 'arena' | 'road') {
+    if (kind === 'road') return true;
+    const attacker = this.clients.get(attackerId);
+    if (!attacker) return false;
+    if (attacker.mode !== 'battle_arena') return true;
+    return attacker.inMatch && this.matchState.state === 'active';
+  }
+
   private applyForwardCone(
     attackerId: string,
     attackerName: string,
@@ -1289,6 +1294,7 @@ export class RoomManager {
       if (dist > range || dist < 0.05) continue;
       const dot = (dx * fx + dz * fz) / dist;
       if (dot < minDot) continue;
+      if (!this.canDamage(attackerId, 'player')) continue;
       const scaled =
         wType === 'kangri' ? damage : Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
       this.dealDamageToPlayer(c, scaled, attackerId, attackerName, wType, c.state.x, c.state.z);
@@ -1304,6 +1310,7 @@ export class RoomManager {
       if (dist > range || dist < 0.05) continue;
       const dot = (dx * fx + dz * fz) / dist;
       if (dot < minDot) continue;
+      if (!this.canDamage(attackerId, 'arena')) continue;
       const scaled =
         wType === 'kangri' ? damage : Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
       this.dealDamageToBot(b, scaled, attackerId, attackerName, wType, b.state.x, b.state.z);
@@ -1523,9 +1530,9 @@ export class RoomManager {
       }
     }
 
-    if (hitPlayer) {
+    if (hitPlayer && this.canDamage(attackerId, 'player')) {
       this.dealDamageToPlayer(hitPlayer, damage, attackerId, attackerName, wType, hitPlayer.state.x, hitPlayer.state.z);
-    } else if (hitArena) {
+    } else if (hitArena && this.canDamage(attackerId, 'arena')) {
       this.dealDamageToBot(hitArena, damage, attackerId, attackerName, wType, hitArena.state.x, hitArena.state.z);
     } else if (hitRoad) {
       this.hurtRoadBot(hitRoad, damage, attackerId, attackerName, wType);
@@ -2417,6 +2424,7 @@ export class RoomManager {
   }
 
   private applyDirectHit(victim: ConnectedClient, p: ArenaProjectileState) {
+    if (!this.canDamage(p.ownerId, 'player')) return;
     const cfg = WEAPON_CONFIGS[p.weaponType];
     const damage = cfg.damage;
     this.dealDamageToPlayer(victim, damage, p.ownerId, p.ownerName, p.weaponType, p.x, p.z);
@@ -2426,6 +2434,7 @@ export class RoomManager {
   }
 
   private applyDirectHitBot(victim: { state: PlayerServerState; combat: PlayerCombatState }, p: ArenaProjectileState) {
+    if (!this.canDamage(p.ownerId, 'arena')) return;
     const cfg = WEAPON_CONFIGS[p.weaponType];
     const damage = cfg.damage;
     this.dealDamageToBot(victim, damage, p.ownerId, p.ownerName, p.weaponType, p.x, p.z);
@@ -2455,7 +2464,7 @@ export class RoomManager {
       const dx = c.state.x - x;
       const dz = c.state.z - z;
       const d2 = dx * dx + dz * dz;
-      if (d2 <= radius * radius) {
+      if (d2 <= radius * radius && this.canDamage(p.ownerId, 'player')) {
         const falloff = 1.0 - Math.sqrt(d2) / radius;
         const dmg = Math.round(splashDmg * Math.max(0.4, falloff));
         this.dealDamageToPlayer(c, dmg, p.ownerId, p.ownerName, p.weaponType, c.state.x, c.state.z);
@@ -2468,7 +2477,7 @@ export class RoomManager {
       const dx = b.state.x - x;
       const dz = b.state.z - z;
       const d2 = dx * dx + dz * dz;
-      if (d2 <= radius * radius) {
+      if (d2 <= radius * radius && this.canDamage(p.ownerId, 'arena')) {
         const falloff = 1.0 - Math.sqrt(d2) / radius;
         const dmg = Math.round(splashDmg * Math.max(0.4, falloff));
         this.dealDamageToBot(b, dmg, p.ownerId, p.ownerName, p.weaponType, b.state.x, b.state.z);

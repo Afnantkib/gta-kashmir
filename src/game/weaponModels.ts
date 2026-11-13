@@ -64,7 +64,7 @@ export function createWorldPickupMesh(type: WeaponType): THREE.Group {
     pistol: 'PISTOL',
     shotgun: 'SHOTGUN',
     rifle: 'RIFLE',
-    kangri: 'KANGRI',
+    kangri: 'KANGIR',
   };
   root.add(pickupNameSprite(labels[type] || type.toUpperCase()));
 
