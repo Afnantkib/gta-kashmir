@@ -240,7 +240,7 @@
   },
   "p_1794554447019_hetm5x": {
     "id": "p_1794554447019_hetm5x",
-    "name": "Driver_7544",
+    "name": "Driver_1200",
     "cash": 1500,
     "xp": 0,
     "level": 1,
@@ -261,7 +261,7 @@
       "weaponUsage": {}
     },
     "createdAt": "2026-11-13T07:30:17.867Z",
-    "lastActiveAt": "2026-11-13T10:49:18.040Z"
+    "lastActiveAt": "2026-11-13T10:53:41.237Z"
   },
   "p_1794555200429_nhqqap": {
     "id": "p_1794555200429_nhqqap",
@@ -612,5 +612,30 @@
     },
     "createdAt": "2026-11-13T10:49:53.805Z",
     "lastActiveAt": "2026-11-13T10:49:53.805Z"
+  },
+  "p_1794567421422_d6rknp": {
+    "id": "p_1794567421422_d6rknp",
+    "name": "Driver_9742",
+    "cash": 1500,
+    "xp": 0,
+    "level": 1,
+    "selectedVehicle": "auto",
+    "unlockedVehicles": [
+      "auto",
+      "taxi",
+      "police",
+      "bike"
+    ],
+    "completedMissions": [],
+    "bestRaceTimes": {},
+    "battleStats": {
+      "wins": 0,
+      "matchesPlayed": 0,
+      "kills": 0,
+      "damageDealt": 0,
+      "weaponUsage": {}
+    },
+    "createdAt": "2026-11-13T10:57:03.888Z",
+    "lastActiveAt": "2026-11-13T10:57:03.888Z"
   }
 }
