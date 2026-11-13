@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 import path from 'path';
 import { roomManager } from './server/roomManager.ts';
 import { storage } from './server/storage.ts';
+import { createAdvertisement, listAdvertisements, removeAdvertisement } from './server/advertisements.ts';
 
 const app = express();
 const port = parseInt(process.env.PORT || '3000', 10);
@@ -63,6 +64,22 @@ app.post('/api/battle/claim', (req, res) => {
     return res.status(409).json(result);
   }
 
+  res.json(result);
+});
+
+app.get('/api/advertisements', (_req, res) => {
+  res.json({ success: true, advertisements: listAdvertisements() });
+});
+
+app.post('/api/advertisements', (req, res) => {
+  const result = createAdvertisement(req.body);
+  if (!result.success) return res.status(400).json(result);
+  res.status(201).json(result);
+});
+
+app.delete('/api/advertisements/:id', (req, res) => {
+  const result = removeAdvertisement(req.params.id);
+  if (!result.success) return res.status(404).json(result);
   res.json(result);
 });
 

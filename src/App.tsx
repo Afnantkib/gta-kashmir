@@ -25,6 +25,9 @@ import {
 } from './shared/types.ts';
 import { createVehicleMesh, VehicleMeshBundle } from './game/vehicles.ts';
 import { buildSrinagarWorld, WorldObjects } from './game/world.ts';
+import { BILLBOARD_SLOTS, BoulevardAds, mountBoulevardAds } from './game/billboards.ts';
+import { SEED_ADVERTISEMENTS, Advertisement } from './shared/advertisements.ts';
+import AdBoard from './ui/AdBoard.tsx';
 import { buildBattleArena, ArenaManager } from './game/arena.ts';
 import { createWorldPickupMesh, createWeaponMesh, updatePickupVisual } from './game/weaponModels.ts';
 
@@ -278,6 +281,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Square,
+  Megaphone,
 } from 'lucide-react';
 
 function MobileHoldButton({
@@ -389,6 +393,12 @@ export default function App() {
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleCategory>('auto');
   const [unlockedVehicles, setUnlockedVehicles] = useState<VehicleCategory[]>(['auto', 'taxi', 'police', 'bike']);
   const [isGarageOpen, setIsGarageOpen] = useState(false);
+  const [adsOpen, setAdsOpen] = useState(false);
+  const adsOpenRef = useRef(false);
+  const [advertisements, setAdvertisements] = useState<Advertisement[]>(SEED_ADVERTISEMENTS);
+  const advertisementsRef = useRef(advertisements);
+  advertisementsRef.current = advertisements;
+  const adBoardsRef = useRef<BoulevardAds | null>(null);
   const [connectedPlayersCount, setConnectedPlayersCount] = useState(0);
   const [liveScoreboard, setLiveScoreboard] = useState<LiveScoreEntry[]>([]);
   const liveScoreboardKeyRef = useRef('');
@@ -566,6 +576,30 @@ export default function App() {
       }
     >
   >(new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/advertisements')
+      .then(res => res.json())
+      .then(data => {
+        if (!cancelled && data?.success && Array.isArray(data.advertisements)) {
+          setAdvertisements(data.advertisements);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    adBoardsRef.current?.show(advertisements);
+  }, [advertisements]);
+
+  useEffect(() => {
+    adsOpenRef.current = adsOpen;
+    if (adsOpen) keysRef.current = {};
+  }, [adsOpen]);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -915,7 +949,16 @@ export default function App() {
   // Keyboard handlers
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      const isInputFocused = document.activeElement?.tagName === 'INPUT';
+      const tag = document.activeElement?.tagName;
+      const isInputFocused = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+      if (adsOpenRef.current) {
+        if (e.code === 'Escape' || (e.code === 'KeyB' && !isInputFocused)) {
+          e.preventDefault();
+          setAdsOpen(false);
+          keysRef.current = {};
+        }
+        return;
+      }
       if (isInputFocused && e.code !== 'Escape') {
         return;
       }
@@ -973,9 +1016,13 @@ export default function App() {
       } else if (e.code === 'KeyT' && !isChatOpen) {
         e.preventDefault();
         setIsChatOpen(true);
+      } else if (e.code === 'KeyB' && !isChatOpen && !isInputFocused) {
+        e.preventDefault();
+        setAdsOpen(true);
       } else if (e.code === 'Escape') {
         setIsChatOpen(false);
         setIsGarageOpen(false);
+        setAdsOpen(false);
       } else if (e.code === 'KeyR' && !isChatOpen) {
         if (gameModeRef.current === 'battle_arena') {
           const sp = ARENA_SPAWNS[Math.floor(Math.random() * ARENA_SPAWNS.length)];
@@ -1063,6 +1110,8 @@ export default function App() {
     try {
       const world = buildSrinagarWorld(scene);
       worldObjectsRef.current = world;
+      adBoardsRef.current = mountBoulevardAds(scene);
+      adBoardsRef.current.show(advertisementsRef.current);
     } catch (err) {
       console.error('[GTA Kashmir] Failed to build Srinagar world:', err);
       showToast('World failed to load. Refresh the page.');
@@ -2211,6 +2260,8 @@ export default function App() {
           sh.group.position.y = 0.1 + Math.sin(clock * 1.8 + i) * 0.03;
         });
 
+        adBoardsRef.current?.tick(now);
+
         if (worldObjectsRef.current.nishatFountains) {
           worldObjectsRef.current.nishatFountains.forEach(fn => {
             const h = fn.baseH + Math.sin(clock * 4.8 + fn.phase) * 0.65;
@@ -2259,6 +2310,8 @@ export default function App() {
       } catch {
         /* ignore */
       }
+      adBoardsRef.current?.dispose();
+      adBoardsRef.current = null;
       worldObjectsRef.current = null;
       arenaManagerRef.current = null;
       localVehicleBundleRef.current = null;
@@ -2342,6 +2395,14 @@ export default function App() {
       ctx.lineTo(mx(-24), my(ROAD_BOUNDS.MIN_Z));
       ctx.stroke();
     }
+
+    BILLBOARD_SLOTS.forEach(slot => {
+      const px = mx(slot.x);
+      const py = my(slot.z);
+      if (px < -4 || px > 164 || py < -4 || py > 132) return;
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(px - 2, py - 4, 4, 8);
+    });
 
     for (const p of worldPickupsRef.current) {
       const px = mx(p.x);
@@ -2468,6 +2529,13 @@ export default function App() {
               >
                 <Swords className="w-5 h-5 text-slate-950" /> DAL LAKE MAYHEM (COMBAT)
               </button>
+              <button
+                type="button"
+                onClick={() => setAdsOpen(true)}
+                className="w-full sm:w-auto px-6 py-3.5 bg-slate-950/80 border border-amber-400/70 text-amber-200 font-black tracking-wider rounded-xl hover:bg-slate-900 cursor-pointer font-['Outfit'] flex items-center justify-center gap-2"
+              >
+                <Megaphone className="w-5 h-5" /> ADVERTISEMENTS
+              </button>
             </div>
 
             <div className={`text-xs text-slate-400 flex flex-wrap items-center justify-center gap-3 pt-4 border-t border-slate-800 ${isMobile ? 'hidden' : ''}`}>
@@ -2484,6 +2552,8 @@ export default function App() {
               <span><b>Q</b> Evasive Dodge</span>
               <span>·</span>
               <span><b>V</b> Garage</span>
+              <span>·</span>
+              <span><b>B</b> Ads</span>
               <span>·</span>
               <span><b>T</b> Chat</span>
             </div>
@@ -2512,6 +2582,13 @@ export default function App() {
                 >
                   <Swords className="w-4 h-4" />
                 </button>
+                <button
+                  onClick={() => setAdsOpen(true)}
+                  className="p-2 rounded-lg text-amber-200"
+                  title="Advertisements"
+                >
+                  <Megaphone className="w-4 h-4" />
+                </button>
               </div>
             </div>
           )}
@@ -2528,6 +2605,14 @@ export default function App() {
             >
               <Swords className="w-3.5 h-3.5" />
               <span>DAL LAKE MAYHEM (ARENA)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdsOpen(true)}
+              className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-black text-amber-200 hover:text-white cursor-pointer"
+            >
+              <Megaphone className="w-3.5 h-3.5" />
+              <span>ADVERTISEMENTS</span>
             </button>
           </div>
 
@@ -3248,6 +3333,14 @@ export default function App() {
           </div>
         </div>
       )}
+
+      <AdBoard
+        open={adsOpen}
+        ads={advertisements}
+        posterName={callsign}
+        onClose={() => setAdsOpen(false)}
+        onList={setAdvertisements}
+      />
     </div>
   );
 }
