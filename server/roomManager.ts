@@ -257,8 +257,10 @@ export class RoomManager {
                 spawnZ = sp.z;
                 spawnHeading = sp.heading;
               } else {
-                spawnZ = -400 + Math.random() * 40;
-                spawnX = Math.random() > 0.5 ? -3.5 : 3.5;
+                const humanCount = this.clients.size;
+                spawnX = humanCount % 2 === 0 ? -3.5 : 3.5;
+                spawnZ = -385 - (humanCount % 6) * 14;
+                spawnHeading = 0;
               }
 
               const wantsRoom = selectedMode === 'battle_arena' && enterRoom !== false;
@@ -1297,6 +1299,13 @@ export class RoomManager {
     const attacker = this.clients.get(attackerId);
     if (attacker) attacker.combat.damageDealt += amount;
     const dead = bot.combat.health <= 0 || bot.combat.vehicleHealth <= 0;
+    if (dead) {
+      bot.combat.health = 0;
+      bot.combat.vehicleHealth = 0;
+      bot.combat.isAlive = false;
+      bot.speed = 0;
+      bot.combat.respawnAt = Date.now() + 5000;
+    }
     this.broadcast({
       type: 'DAMAGE_EVENT',
       event: {
@@ -1324,7 +1333,6 @@ export class RoomManager {
         victimName: bot.name,
         weaponType: wType,
       });
-      this.recycleRoadBot(bot, bot.z);
     }
   }
 
@@ -1967,7 +1975,11 @@ export class RoomManager {
     // 3. Simulate Free-Roam AI Bots (server-authoritative, shared across sessions)
     for (const [bId, bot] of this.bots.entries()) {
       if (bot.combat && !bot.combat.isAlive) {
-        this.recycleRoadBot(bot, bot.z);
+        bot.speed = 0;
+        if (!bot.combat.respawnAt || now >= bot.combat.respawnAt) {
+          this.recycleRoadBot(bot, bot.z);
+        }
+        continue;
       }
       if (bot.x === 0 && Math.abs(bot.z) < 2) {
         bot.x = bot.heading === 0 ? -3.5 : 3.5;
@@ -2385,6 +2397,12 @@ export class RoomManager {
     const hull = this.hullDamage(wType, amount);
     victim.combat.vehicleHealth = Math.max(0, (victim.combat.vehicleHealth ?? 100) - hull);
     const isElim = victim.combat.health <= 0 || victim.combat.vehicleHealth <= 0;
+    if (isElim) {
+      victim.combat.health = 0;
+      victim.combat.vehicleHealth = 0;
+      victim.combat.isAlive = false;
+      victim.state.speed = 0;
+    }
 
     // Credit attacker
     const attacker = this.clients.get(attackerId);
@@ -2489,6 +2507,12 @@ export class RoomManager {
     const hull = this.hullDamage(wType, amount);
     victim.combat.vehicleHealth = Math.max(0, (victim.combat.vehicleHealth ?? 100) - hull);
     const isElim = victim.combat.health <= 0 || victim.combat.vehicleHealth <= 0;
+    if (isElim) {
+      victim.combat.health = 0;
+      victim.combat.vehicleHealth = 0;
+      victim.combat.isAlive = false;
+      victim.state.speed = 0;
+    }
 
     const attacker = this.clients.get(attackerId);
     if (attacker) {

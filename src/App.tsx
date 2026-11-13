@@ -33,20 +33,32 @@ function makeNametagSprite(name: string, isNpc: boolean) {
   canvas.width = 256;
   canvas.height = 64;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = isNpc ? 'rgba(20, 64, 38, 0.82)' : 'rgba(8, 32, 64, 0.85)';
+  ctx.fillStyle = isNpc ? 'rgba(20, 64, 38, 0.82)' : 'rgba(80, 12, 12, 0.9)';
   ctx.fillRect(0, 0, 256, 64);
+  if (!isNpc) {
+    ctx.strokeStyle = 'rgba(248, 113, 113, 0.95)';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, 252, 60);
+  }
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 20px Outfit, sans-serif';
+  ctx.font = 'bold 22px Outfit, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(name.slice(0, 18), 128, 28);
-  ctx.fillStyle = isNpc ? '#86efac' : '#67e8f9';
+  ctx.fillText((name || 'Driver').slice(0, 16), 128, 28);
+  ctx.fillStyle = isNpc ? '#86efac' : '#f87171';
   ctx.font = 'bold 13px Outfit, sans-serif';
   ctx.fillText(isNpc ? 'AI BOT' : 'PLAYER', 128, 50);
   const tex = new THREE.CanvasTexture(canvas);
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const mat = new THREE.SpriteMaterial({
+    map: tex,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(4.4, 1.1, 1);
-  sprite.position.y = 3.15;
+  sprite.renderOrder = 12;
+  sprite.scale.set(isNpc ? 4.4 : 5.2, isNpc ? 1.1 : 1.25, 1);
+  sprite.position.y = isNpc ? 3.15 : 3.45;
+  sprite.userData.tagKey = `${name}|${isNpc}|red`;
   return sprite;
 }
 
@@ -231,7 +243,41 @@ import {
   Bomb,
   AlertTriangle,
   Skull,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
+
+function MobileHoldButton({
+  label,
+  className,
+  onHoldChange,
+  onTap,
+}: {
+  label: React.ReactNode;
+  className?: string;
+  onHoldChange?: (held: boolean) => void;
+  onTap?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={className}
+      style={{ touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+      onContextMenu={e => e.preventDefault()}
+      onPointerDown={e => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        onHoldChange?.(true);
+        onTap?.();
+      }}
+      onPointerUp={() => onHoldChange?.(false)}
+      onPointerCancel={() => onHoldChange?.(false)}
+    >
+      {label}
+    </button>
+  );
+}
 
 function LiveTopFive({
   board,
@@ -293,6 +339,13 @@ export default function App() {
 
   // Game UI State
   const [hasStarted, setHasStarted] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 900;
+  });
+  const isMobileRef = useRef(isMobile);
+  const touchSteerRef = useRef({ left: false, right: false });
+  const touchFireRef = useRef(false);
   const [isMuted, setIsMuted] = useState(false);
   const [cash, setCash] = useState(1500);
   const [speedKmh, setSpeedKmh] = useState(0);
@@ -316,6 +369,7 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [callsign, setCallsign] = useState(() => `Driver_${Math.floor(1000 + Math.random() * 9000)}`);
+  const callsignRef = useRef(callsign);
   const [activeMission, setActiveMission] = useState<MissionDefinition | null>(null);
   const [missionStep, setMissionStep] = useState(0);
   const [missionTimeLeft, setMissionTimeLeft] = useState(0);
@@ -384,6 +438,26 @@ export default function App() {
   })());
   const inputSeqRef = useRef(0);
   const keysRef = useRef<{ [k: string]: boolean }>({});
+
+  useEffect(() => {
+    callsignRef.current = callsign;
+  }, [callsign]);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(pointer: coarse)');
+    const apply = () => {
+      const mobile = mq.matches || window.innerWidth < 900;
+      isMobileRef.current = mobile;
+      setIsMobile(mobile);
+    };
+    apply();
+    mq.addEventListener('change', apply);
+    window.addEventListener('resize', apply);
+    return () => {
+      mq.removeEventListener('change', apply);
+      window.removeEventListener('resize', apply);
+    };
+  }, []);
   const activeMissionRef = useRef<MissionDefinition | null>(null);
   const missionStepRef = useRef(0);
   const missionTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -441,6 +515,7 @@ export default function App() {
         vehicle: VehicleCategory;
         name: string;
         health?: number;
+        vehicleHealth?: number;
         isAlive?: boolean;
         isNpc?: boolean;
         weapon?: WeaponType | null;
@@ -988,7 +1063,7 @@ export default function App() {
         JSON.stringify({
           type: 'JOIN',
           playerId: playerIdRef.current,
-          name: callsign,
+          name: callsignRef.current,
           vehicle: selectedVehicle,
           mode: gameModeRef.current,
           enterRoom: gameModeRef.current === 'battle_arena',
@@ -999,6 +1074,85 @@ export default function App() {
     ws.onclose = () => {
       setPresence(prev => ({ ...prev, connected: false, online: 0, inRoom: 0, inMatch: 0, waiting: 0, bots: 0 }));
       setConnectedPlayersCount(0);
+    };
+
+    const syncRemotePlayer = (p: PlayerServerState) => {
+      if (!p?.id || p.id === playerIdRef.current) return;
+      const hp = p.combat?.health ?? 100;
+      const vehHp = p.combat?.vehicleHealth ?? 100;
+      const isNpc = p.isNpc === true;
+      const alive = p.combat?.isAlive !== false && hp > 0 && vehHp > 0;
+      remoteTargetsRef.current.set(p.id, {
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        heading: p.heading,
+        speed: p.speed,
+        steer: p.steerAngle,
+        vehicle: p.vehicle,
+        name: p.name,
+        health: hp,
+        vehicleHealth: vehHp,
+        isAlive: alive,
+        isNpc,
+        weapon: p.combat?.weapon || null,
+        mode: p.mode,
+      });
+
+      const existing = remoteVehicleBundlesRef.current.get(p.id);
+      if (existing && existing.root.userData.vehicle !== p.vehicle) {
+        scene.remove(existing.root);
+        nametagSpritesRef.current.delete(p.id);
+        remoteVehicleBundlesRef.current.delete(p.id);
+      }
+      if (!remoteVehicleBundlesRef.current.has(p.id)) {
+        const rMesh = createVehicleMesh(p.vehicle);
+        rMesh.root.userData.vehicle = p.vehicle;
+        rMesh.root.position.set(p.x, 0.04, p.z);
+        rMesh.root.rotation.y = p.heading;
+        rMesh.root.frustumCulled = false;
+        rMesh.body.frustumCulled = false;
+        rMesh.root.visible = true;
+        rMesh.root.scale.set(1, 1, 1);
+        const tag = makeNametagSprite(p.name, isNpc);
+        rMesh.root.add(tag);
+        rMesh.root.userData.tagKey = `${p.name}|${isNpc}|red`;
+        nametagSpritesRef.current.set(p.id, tag);
+        if (!isNpc) {
+          const disc = new THREE.Mesh(
+            new THREE.CircleGeometry(1.15, 18),
+            new THREE.MeshBasicMaterial({
+              color: 0xef4444,
+              transparent: true,
+              opacity: 0.4,
+              depthWrite: false,
+            })
+          );
+          disc.rotation.x = -Math.PI / 2;
+          disc.position.y = 0.05;
+          disc.name = 'playerMarker';
+          rMesh.root.add(disc);
+        }
+        remoteVehicleBundlesRef.current.set(p.id, rMesh);
+        scene.add(rMesh.root);
+      } else {
+        const live = remoteVehicleBundlesRef.current.get(p.id)!;
+        live.root.visible = true;
+        live.root.frustumCulled = false;
+        const tagKey = `${p.name}|${isNpc}|red`;
+        if (live.root.userData.tagKey !== tagKey) {
+          const prev = nametagSpritesRef.current.get(p.id);
+          if (prev) live.root.remove(prev);
+          const tag = makeNametagSprite(p.name, isNpc);
+          live.root.add(tag);
+          nametagSpritesRef.current.set(p.id, tag);
+          live.root.userData.tagKey = tagKey;
+        }
+        if (isNpc && p.mode === 'free_roam') {
+          live.root.position.set(p.x, 0.04, p.z);
+          live.root.rotation.y = p.heading;
+        }
+      }
     };
 
     ws.onmessage = event => {
@@ -1034,7 +1188,9 @@ export default function App() {
               setLiveScoreboard(msg.scoreboard);
             }
           }
-          const me = (msg.players as PlayerServerState[] | undefined)?.find(p => p.id === playerIdRef.current);
+          const welcomePlayers = (msg.players as PlayerServerState[] | undefined) || [];
+          for (const p of welcomePlayers) syncRemotePlayer(p);
+          const me = welcomePlayers.find(p => p.id === playerIdRef.current);
           if (me) {
             localStateRef.current.x = me.x;
             localStateRef.current.z = me.z;
@@ -1115,53 +1271,7 @@ export default function App() {
             speedPenaltyRef.current = localServerPlayer.combat.speedPenaltyUntil || 0;
           }
 
-          // Remote vehicles
-          for (const p of players) {
-            if (p.id === playerIdRef.current) continue;
-
-            remoteTargetsRef.current.set(p.id, {
-              x: p.x,
-              y: p.y,
-              z: p.z,
-              heading: p.heading,
-              speed: p.speed,
-              steer: p.steerAngle,
-              vehicle: p.vehicle,
-              name: p.name,
-              health: p.combat?.health,
-              isAlive: p.combat?.isAlive,
-              isNpc: !!p.isNpc,
-              weapon: p.combat?.weapon || null,
-              mode: p.mode,
-            });
-
-            const existing = remoteVehicleBundlesRef.current.get(p.id);
-            if (existing && existing.root.userData.vehicle !== p.vehicle) {
-              scene.remove(existing.root);
-              nametagSpritesRef.current.delete(p.id);
-              remoteVehicleBundlesRef.current.delete(p.id);
-            }
-            if (!remoteVehicleBundlesRef.current.has(p.id)) {
-              const rMesh = createVehicleMesh(p.vehicle);
-              rMesh.root.userData.vehicle = p.vehicle;
-              rMesh.root.position.set(p.x, 0.04, p.z);
-              rMesh.root.rotation.y = p.heading;
-              rMesh.root.frustumCulled = false;
-              rMesh.body.frustumCulled = false;
-              rMesh.root.visible = true;
-              rMesh.root.scale.set(1, 1, 1);
-              const tag = makeNametagSprite(p.name, !!p.isNpc);
-              rMesh.root.add(tag);
-              nametagSpritesRef.current.set(p.id, tag);
-              remoteVehicleBundlesRef.current.set(p.id, rMesh);
-              scene.add(rMesh.root);
-            } else if (p.isNpc && p.mode === 'free_roam') {
-              const live = remoteVehicleBundlesRef.current.get(p.id)!;
-              live.root.visible = true;
-              live.root.position.set(p.x, 0.04, p.z);
-              live.root.rotation.y = p.heading;
-            }
-          }
+          for (const p of players) syncRemotePlayer(p);
 
           // Clean up disconnected players
           const activeIds = new Set(players.map(pl => pl.id));
@@ -1172,6 +1282,24 @@ export default function App() {
               remoteTargetsRef.current.delete(rId);
               nametagSpritesRef.current.delete(rId);
             }
+          }
+        } else if (msg.type === 'PLAYER_JOINED' && msg.player) {
+          syncRemotePlayer(msg.player as PlayerServerState);
+          if (msg.presence) {
+            setPresence(msg.presence);
+            setConnectedPlayersCount(msg.presence.online);
+          }
+        } else if (msg.type === 'PLAYER_LEFT' && msg.playerId) {
+          const bundle = remoteVehicleBundlesRef.current.get(msg.playerId);
+          if (bundle) {
+            scene.remove(bundle.root);
+            remoteVehicleBundlesRef.current.delete(msg.playerId);
+          }
+          remoteTargetsRef.current.delete(msg.playerId);
+          nametagSpritesRef.current.delete(msg.playerId);
+          if (msg.presence) {
+            setPresence(msg.presence);
+            setConnectedPlayersCount(msg.presence.online);
           }
         } else if (msg.type === 'PRESENCE_UPDATE' || msg.type === 'PONG') {
           if (msg.presence) {
@@ -1345,8 +1473,17 @@ export default function App() {
             setSpectateName(msg.attackerName || 'killer');
             setServerAnnouncement('YOU WERE ELIMINATED');
             showToast('You were eliminated. Spectating your killer...');
-          } else if (msg.attackerId === playerIdRef.current) {
-            showToast(`🎯 ELIMINATION CONFIRMED: ${msg.victimName}!`);
+          } else {
+            const remote = remoteTargetsRef.current.get(msg.victimId);
+            if (remote) {
+              remote.isAlive = false;
+              remote.health = 0;
+              remote.vehicleHealth = 0;
+              remote.speed = 0;
+            }
+            if (msg.attackerId === playerIdRef.current) {
+              showToast(`🎯 ELIMINATION CONFIRMED: ${msg.victimName}!`);
+            }
           }
         } else if (msg.type === 'PLAYER_RESPAWN') {
           if (msg.playerId === playerIdRef.current) {
@@ -1410,11 +1547,13 @@ export default function App() {
       clock += dt;
 
       const keys = keysRef.current;
-      const up = keys['ArrowUp'] || keys['KeyW'];
-      const dn = keys['ArrowDown'] || keys['KeyS'];
-      const lf = keys['ArrowLeft'] || keys['KeyA'];
-      const rt = keys['ArrowRight'] || keys['KeyD'];
-      const space = !!keys['Space'];
+      const mobileDrive = isMobileRef.current;
+      const touch = touchSteerRef.current;
+      const up = keys['ArrowUp'] || keys['KeyW'] || mobileDrive;
+      const dn = mobileDrive ? false : keys['ArrowDown'] || keys['KeyS'];
+      const lf = keys['ArrowLeft'] || keys['KeyA'] || touch.left;
+      const rt = keys['ArrowRight'] || keys['KeyD'] || touch.right;
+      const space = !!keys['Space'] || touchFireRef.current;
 
       const loc = localStateRef.current;
       const vCfg = VEHICLE_CONFIGS[loc.vehicle] || VEHICLE_CONFIGS.auto;
@@ -1632,7 +1771,7 @@ export default function App() {
             const pkt: PlayerInputPacket = {
               seq: inputSeqRef.current,
               steer: loc.steerAngle,
-              throttle: up ? 1 : 0,
+              throttle: up || mobileDrive ? 1 : 0,
               brake: dn ? 1 : 0,
               handbrake: !!(keys['ControlLeft'] || keys['ControlRight']),
               fire: false,
@@ -1699,13 +1838,22 @@ export default function App() {
             !!target.isNpc &&
             !matchLive;
           const isStreetNpc = !!target.isNpc && target.mode !== 'battle_arena';
-          bundle.root.visible = isStreetNpc || !hideArenaIdle;
-          if (isStreetNpc) {
+          const dead = target.isAlive === false;
+          if (dead) {
+            bundle.root.visible = true;
+            bundle.root.frustumCulled = false;
+            setVehicleWrecked(bundle, true);
+          } else if (isStreetNpc) {
+            bundle.root.visible = true;
+            bundle.root.frustumCulled = false;
+            setVehicleWrecked(bundle, false);
+          } else if (!target.isNpc) {
             bundle.root.visible = true;
             bundle.root.frustumCulled = false;
             setVehicleWrecked(bundle, false);
           } else {
-            setVehicleWrecked(bundle, target.isAlive === false);
+            bundle.root.visible = !hideArenaIdle;
+            setVehicleWrecked(bundle, false);
           }
           ensureHeldWeapon(bundle, target.isAlive === false ? null : target.weapon || null);
           const held = bundle.root.userData.heldMesh as THREE.Object3D | undefined;
@@ -2102,7 +2250,7 @@ export default function App() {
       const rx = mx(target.x);
       const ry = my(target.z);
       if (rx >= 0 && rx <= 160 && ry >= 0 && ry <= 128) {
-        ctx.fillStyle = target.isNpc ? '#4ade80' : target.vehicle === 'police' ? '#3b82f6' : '#f59e0b';
+        ctx.fillStyle = target.isNpc ? '#4ade80' : '#ef4444';
         ctx.beginPath();
         ctx.arc(rx, ry, 3.5, 0, Math.PI * 2);
         ctx.fill();
@@ -2222,7 +2370,7 @@ export default function App() {
               </button>
             </div>
 
-            <div className="text-xs text-slate-400 flex flex-wrap items-center justify-center gap-3 pt-4 border-t border-slate-800">
+            <div className={`text-xs text-slate-400 flex flex-wrap items-center justify-center gap-3 pt-4 border-t border-slate-800 ${isMobile ? 'hidden' : ''}`}>
               <span><b>WASD / Arrows</b> Drive</span>
               <span>·</span>
               <span><b>Space / FIRE</b> Attack</span>
@@ -2246,8 +2394,37 @@ export default function App() {
       {/* Floating In-Game HUD (85% Viewport Unobstructed) */}
       {hasStarted && (
         <>
+          {isMobile && (
+            <div className="absolute top-2 left-2 right-2 z-30 flex items-start justify-between pointer-events-none">
+              <div className="text-left">
+                <div className="text-xl font-extrabold text-amber-400 font-['Outfit'] tabular-nums drop-shadow-md">
+                  ₹{cash.toLocaleString('en-IN')}
+                </div>
+                <div className="text-[11px] font-bold font-mono text-rose-300 drop-shadow">
+                  HP {playerHealth} · VEH {playerVehicleHealth}
+                </div>
+              </div>
+              <div className="pointer-events-auto flex gap-1 bg-slate-950/80 border border-slate-700 rounded-xl p-1">
+                <button
+                  onClick={() => switchGameMode('free_roam')}
+                  className={`p-2 rounded-lg ${gameMode === 'free_roam' ? 'bg-cyan-500 text-slate-950' : 'text-slate-300'}`}
+                  title="Free-Roam"
+                >
+                  <Car className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => switchGameMode('battle_arena')}
+                  className={`p-2 rounded-lg ${gameMode === 'battle_arena' ? 'bg-amber-500 text-slate-950' : 'text-slate-300'}`}
+                  title="Arena"
+                >
+                  <Swords className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Top Center: Game Mode Switcher Tab Bar */}
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex items-center p-1 bg-slate-950/85 border border-slate-700 rounded-2xl shadow-2xl backdrop-blur-md">
+          <div className={`${isMobile ? 'hidden' : ''} absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex items-center p-1 bg-slate-950/85 border border-slate-700 rounded-2xl shadow-2xl backdrop-blur-md`}>
             <button
               onClick={() => switchGameMode('free_roam')}
               className={`flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
@@ -2273,7 +2450,7 @@ export default function App() {
           </div>
 
           {/* Top-Left: Player Stats & Wallet */}
-          <div className="absolute top-4 left-4 z-20 flex flex-col gap-1 pointer-events-none">
+          <div className={`${isMobile ? 'hidden' : ''} absolute top-4 left-4 z-20 flex flex-col gap-1 pointer-events-none`}>
             <div className="flex items-center gap-3">
               <div className="text-3xl font-extrabold text-amber-400 drop-shadow-md font-['Outfit'] tabular-nums">
                 ₹{cash.toLocaleString('en-IN')}
@@ -2302,7 +2479,7 @@ export default function App() {
           </div>
 
           {/* Top Center-Sub: Match Info in Battle Arena */}
-          {gameMode === 'battle_arena' && (
+          {gameMode === 'battle_arena' && !isMobile && (
             <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1 pointer-events-none">
               <div className="flex items-center gap-3 px-5 py-2 bg-slate-950/90 border border-slate-700/80 rounded-2xl shadow-xl backdrop-blur-md text-xs font-bold font-['Outfit']">
                 <div className="flex items-center gap-1.5 text-amber-400 font-mono text-sm uppercase">
@@ -2329,7 +2506,7 @@ export default function App() {
           )}
 
           {/* Top-Right: Vehicle switcher, garage, compact live top 5 */}
-          <div className="absolute top-4 right-4 z-20 flex flex-col items-end gap-2">
+          <div className={`${isMobile ? 'hidden' : ''} absolute top-4 right-4 z-20 flex flex-col items-end gap-2`}>
           <div className="flex items-center gap-2 pointer-events-auto">
             <div className="hidden md:flex items-center gap-1 bg-slate-950/80 border border-slate-700/70 p-1 rounded-xl backdrop-blur-md shadow-xl">
               <button
@@ -2405,7 +2582,7 @@ export default function App() {
           </div>
 
           {/* Active Mission HUD Card (Free Roam) */}
-          {activeMission && gameMode === 'free_roam' && (
+          {activeMission && gameMode === 'free_roam' && !isMobile && (
             <div className="absolute top-20 left-4 z-20 w-80 bg-slate-950/85 border-l-4 border-amber-500 border-y border-r border-slate-700/80 p-3 rounded-r-xl shadow-2xl backdrop-blur-md">
               <div className="flex items-center justify-between text-xs text-amber-400 font-bold mb-1">
                 <span className="flex items-center gap-1.5">
@@ -2480,7 +2657,7 @@ export default function App() {
           )}
 
           {nearbyPickup && gameMode === 'free_roam' && (
-            <div className="absolute bottom-36 left-1/2 -translate-x-1/2 z-30 px-6 py-3 bg-slate-950/95 border border-amber-400/80 rounded-2xl shadow-2xl text-center font-['Outfit'] pointer-events-none">
+            <div className={`absolute left-1/2 -translate-x-1/2 z-30 px-6 py-3 bg-slate-950/95 border border-amber-400/80 rounded-2xl shadow-2xl text-center font-['Outfit'] pointer-events-none ${isMobile ? 'bottom-40 max-w-[80vw] px-3 py-2' : 'bottom-36'}`}>
               <div className="text-amber-300 text-lg font-black tracking-wide">
                 DRIVE OVER TO COLLECT
               </div>
@@ -2494,7 +2671,7 @@ export default function App() {
           )}
 
           {/* Bottom-Left: 2D Radar Minimap */}
-          <div className="absolute bottom-4 left-4 z-20 pointer-events-auto">
+          <div className={`${isMobile ? 'hidden' : ''} absolute bottom-4 left-4 z-20 pointer-events-auto`}>
             <div className="relative border-2 border-slate-600 rounded-xl overflow-hidden shadow-2xl bg-slate-950/80">
               <canvas ref={minimapCanvasRef} width={160} height={128} className="block" />
               <div className="absolute bottom-1 right-2 text-[10px] text-slate-400 font-bold tracking-wider">
@@ -2503,7 +2680,7 @@ export default function App() {
             </div>
           </div>
 
-          {gameMode === 'free_roam' && (
+          {gameMode === 'free_roam' && !isMobile && (
             <div className="absolute bottom-28 right-4 z-20 min-w-[210px] p-3 bg-slate-950/90 border border-slate-700/80 rounded-2xl shadow-2xl backdrop-blur-md pointer-events-none">
               <div className="flex items-center justify-between text-[10px] font-bold font-['Outfit'] text-red-400">
                 <span>DRIVER</span>
@@ -2523,7 +2700,7 @@ export default function App() {
           )}
 
           {/* Bottom Left-Center: Combat Health & Defensive Ability Gauge (Battle Arena) */}
-          {gameMode === 'battle_arena' && (
+          {gameMode === 'battle_arena' && !isMobile && (
             <div className="absolute bottom-4 left-48 z-20 flex flex-col gap-2 p-3 bg-slate-950/90 border border-slate-700/80 rounded-2xl shadow-2xl backdrop-blur-md pointer-events-auto min-w-[210px]">
               {/* Health Bar */}
               <div className="space-y-1">
@@ -2602,7 +2779,7 @@ export default function App() {
           )}
 
           {/* Bottom-Right: Active Weapon Card & Fire Button (Battle Arena) */}
-          {gameMode === 'battle_arena' && (
+          {gameMode === 'battle_arena' && !isMobile && (
             <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2 pointer-events-auto">
               <div className="flex items-center gap-3 p-3.5 bg-slate-950/95 border border-slate-700/80 rounded-2xl shadow-2xl backdrop-blur-md">
                 <div className="text-4xl p-2 bg-slate-900 border border-slate-800 rounded-xl">
@@ -2670,7 +2847,7 @@ export default function App() {
           )}
 
           {/* Bottom-Right: Speedometer Cluster (Free Roam) */}
-          {gameMode === 'free_roam' && (
+          {gameMode === 'free_roam' && !isMobile && (
             <div className="absolute bottom-4 right-4 z-20 text-right pointer-events-none">
               <div className="flex flex-col items-end gap-2 pointer-events-auto">
                 <div className="flex items-center gap-3 p-3 bg-slate-950/90 border border-slate-700/80 rounded-2xl shadow-xl backdrop-blur-md">
@@ -2734,7 +2911,7 @@ export default function App() {
           )}
 
           {/* Bottom-Center: Available Missions Pill Bar (Free Roam) */}
-          {!activeMission && gameMode === 'free_roam' && (
+          {!activeMission && gameMode === 'free_roam' && !isMobile && (
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-slate-950/85 border border-slate-700/60 p-1.5 rounded-xl backdrop-blur-md shadow-2xl pointer-events-auto max-w-[90vw] overflow-x-auto">
               {MISSIONS.map(m => (
                 <button
@@ -2750,7 +2927,7 @@ export default function App() {
           )}
 
           {/* Bottom Chat Overlay (Toggleable with T / Escape / Minimize Button) */}
-          <div className="absolute bottom-20 left-4 z-20 w-84 max-w-[85vw] pointer-events-auto">
+          <div className={`${isMobile ? 'hidden' : ''} absolute bottom-20 left-4 z-20 w-84 max-w-[85vw] pointer-events-auto`}>
             {isChatOpen ? (
               <div className="bg-slate-950/95 border border-slate-700/80 rounded-xl p-3 shadow-2xl backdrop-blur-md">
                 <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 text-xs">
@@ -2819,6 +2996,46 @@ export default function App() {
               </button>
             )}
           </div>
+
+          {isMobile && isAlive && (
+            <div className="absolute inset-x-0 bottom-0 z-40 px-4 pb-[max(10px,env(safe-area-inset-bottom))] pt-6 bg-gradient-to-t from-slate-950/80 to-transparent pointer-events-none">
+              <div className="flex items-end justify-between gap-4">
+                <div className="flex gap-3 pointer-events-auto">
+                  <MobileHoldButton
+                    label={<ChevronLeft className="w-10 h-10" />}
+                    onHoldChange={held => {
+                      touchSteerRef.current.left = held;
+                    }}
+                    className="w-[76px] h-[76px] rounded-2xl bg-slate-900/90 border-2 border-white/20 text-white flex items-center justify-center shadow-xl active:bg-cyan-500 active:text-slate-950"
+                  />
+                  <MobileHoldButton
+                    label={<ChevronRight className="w-10 h-10" />}
+                    onHoldChange={held => {
+                      touchSteerRef.current.right = held;
+                    }}
+                    className="w-[76px] h-[76px] rounded-2xl bg-slate-900/90 border-2 border-white/20 text-white flex items-center justify-center shadow-xl active:bg-cyan-500 active:text-slate-950"
+                  />
+                </div>
+                <MobileHoldButton
+                  label={
+                    <span className="flex flex-col items-center leading-none">
+                      <Crosshair className="w-7 h-7 mb-1" />
+                      <span className="text-sm font-black tracking-widest">FIRE</span>
+                    </span>
+                  }
+                  onHoldChange={held => {
+                    touchFireRef.current = held;
+                  }}
+                  onTap={fireWeapon}
+                  className={`w-[92px] h-[92px] rounded-full border-4 flex items-center justify-center shadow-2xl font-['Outfit'] ${
+                    currentWeaponDef && ammo > 0
+                      ? 'bg-gradient-to-br from-red-600 to-amber-500 border-amber-200 text-slate-950'
+                      : 'bg-slate-800/90 border-slate-600 text-slate-400'
+                  }`}
+                />
+              </div>
+            </div>
+          )}
         </>
       )}
 
