@@ -14,6 +14,10 @@ import {
   ArenaHazardState,
   ArenaMatchState,
   DamageEvent,
+  PresenceMetrics,
+  WEAPON_SLOT_ORDER,
+  STREET_WEAPON_ORDER,
+  WorldWeaponPickup,
   ARENA_BOUNDS,
   ARENA_SPAWNS,
   ROAD_BOUNDS,
@@ -21,6 +25,45 @@ import {
 import { createVehicleMesh, VehicleMeshBundle } from './game/vehicles.ts';
 import { buildSrinagarWorld, WorldObjects } from './game/world.ts';
 import { buildBattleArena, ArenaManager } from './game/arena.ts';
+import { createWorldPickupMesh, createWeaponMesh, updatePickupVisual } from './game/weaponModels.ts';
+
+function makeNametagSprite(name: string, isNpc: boolean) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = isNpc ? 'rgba(20, 64, 38, 0.82)' : 'rgba(8, 32, 64, 0.85)';
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 20px Outfit, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(name.slice(0, 18), 128, 28);
+  ctx.fillStyle = isNpc ? '#86efac' : '#67e8f9';
+  ctx.font = 'bold 13px Outfit, sans-serif';
+  ctx.fillText(isNpc ? 'AI BOT' : 'PLAYER', 128, 50);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(4.4, 1.1, 1);
+  sprite.position.y = 3.15;
+  return sprite;
+}
+
+function ensureHeldWeapon(bundle: VehicleMeshBundle, weapon: WeaponType | null) {
+  if (bundle.root.userData.heldType === weapon) return;
+  const prev = bundle.root.userData.heldMesh as THREE.Object3D | undefined;
+  if (prev) bundle.body.remove(prev);
+  bundle.root.userData.heldMesh = null;
+  bundle.root.userData.heldType = weapon;
+  if (!weapon) return;
+  const mesh = createWeaponMesh(weapon);
+  mesh.scale.setScalar(0.82);
+  mesh.position.set(0.62, 0.78, 0.28);
+  mesh.rotation.z = -0.55;
+  mesh.rotation.x = 0.2;
+  bundle.body.add(mesh);
+  bundle.root.userData.heldMesh = mesh;
+}
 
 // Third-Person Chase Camera Calibration Profiles for each vehicle
 interface VehicleCameraProfile {
@@ -39,40 +82,40 @@ const VEHICLE_CAMERA_PROFILES: Record<VehicleCategory, VehicleCameraProfile> = {
     dist: 6.2,
     height: 3.1,
     lookHeight: 1.3,
-    lookAheadBase: 3.5,
-    lookAheadSpeed: 3.5,
-    baseFov: 60,
-    maxFovBoost: 3.0,
+    lookAheadBase: 1.6,
+    lookAheadSpeed: 2.2,
+    baseFov: 58,
+    maxFovBoost: 2.0,
   },
   taxi: {
     // Kashmir Ambassador Taxi: classic sedan profile
-    dist: 7.2,
-    height: 2.8,
-    lookHeight: 1.25,
-    lookAheadBase: 4.0,
-    lookAheadSpeed: 4.0,
-    baseFov: 60,
-    maxFovBoost: 3.5,
+    dist: 7.0,
+    height: 2.7,
+    lookHeight: 1.2,
+    lookAheadBase: 1.8,
+    lookAheadSpeed: 2.4,
+    baseFov: 58,
+    maxFovBoost: 2.2,
   },
   police: {
     // J&K Police Cruiser: pursuit cruiser framing
-    dist: 7.4,
-    height: 2.8,
-    lookHeight: 1.25,
-    lookAheadBase: 4.2,
-    lookAheadSpeed: 4.5,
-    baseFov: 60,
-    maxFovBoost: 3.5,
+    dist: 7.2,
+    height: 2.75,
+    lookHeight: 1.2,
+    lookAheadBase: 2.2,
+    lookAheadSpeed: 2.8,
+    baseFov: 59,
+    maxFovBoost: 2.4,
   },
   bike: {
     // Royal Enfield Bullet 350: closer, lower motorcycle chase view
-    dist: 5.2,
-    height: 2.3,
-    lookHeight: 1.15,
-    lookAheadBase: 3.8,
-    lookAheadSpeed: 4.0,
-    baseFov: 60,
-    maxFovBoost: 3.0,
+    dist: 5.0,
+    height: 2.15,
+    lookHeight: 1.05,
+    lookAheadBase: 1.5,
+    lookAheadSpeed: 2.0,
+    baseFov: 57,
+    maxFovBoost: 1.8,
   },
 };
 import {
@@ -118,7 +161,6 @@ import {
   Crosshair,
   Bomb,
   AlertTriangle,
-  RefreshCw,
   Skull,
 } from 'lucide-react';
 
@@ -135,7 +177,16 @@ export default function App() {
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleCategory>('auto');
   const [unlockedVehicles, setUnlockedVehicles] = useState<VehicleCategory[]>(['auto', 'taxi', 'police', 'bike']);
   const [isGarageOpen, setIsGarageOpen] = useState(false);
-  const [connectedPlayersCount, setConnectedPlayersCount] = useState(1);
+  const [connectedPlayersCount, setConnectedPlayersCount] = useState(0);
+  const [presence, setPresence] = useState<PresenceMetrics>({
+    online: 0,
+    inRoom: 0,
+    inMatch: 0,
+    waiting: 0,
+    bots: 0,
+    connected: false,
+  });
+  const [serverAnnouncement, setServerAnnouncement] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -157,7 +208,11 @@ export default function App() {
   const [equippedWeapon, setEquippedWeapon] = useState<WeaponType | null>(null);
   const [ammo, setAmmo] = useState(0);
   const [kills, setKills] = useState(0);
+  const [deaths, setDeaths] = useState(0);
   const [damageDealt, setDamageDealt] = useState(0);
+  const [weaponInventory, setWeaponInventory] = useState<Partial<Record<WeaponType, number>>>({});
+  const [weaponCooldownMs, setWeaponCooldownMs] = useState(0);
+  const [waitingForRound, setWaitingForRound] = useState(false);
   const [isAlive, setIsAlive] = useState(true);
   const [missileWarning, setMissileWarning] = useState(false);
   const [redHitFlash, setRedHitFlash] = useState(false);
@@ -173,12 +228,24 @@ export default function App() {
     playersAlive: 0,
   });
   const [isMatchResultsOpen, setIsMatchResultsOpen] = useState(false);
+  const [nearbyPickup, setNearbyPickup] = useState<WorldWeaponPickup | null>(null);
 
   // References to live mutable game state
   const clashTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const crashShakeRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
-  const playerIdRef = useRef<string>(`p_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`);
+  const playerIdRef = useRef<string>((() => {
+    try {
+      const key = 'gta_kashmir_tab_id';
+      const existing = sessionStorage.getItem(key);
+      if (existing) return existing;
+      const created = `p_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      sessionStorage.setItem(key, created);
+      return created;
+    } catch {
+      return `p_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    }
+  })());
   const inputSeqRef = useRef(0);
   const keysRef = useRef<{ [k: string]: boolean }>({});
   const activeMissionRef = useRef<MissionDefinition | null>(null);
@@ -193,6 +260,12 @@ export default function App() {
   const serverCratesRef = useRef<ArenaCrateState[]>([]);
   const serverProjectilesRef = useRef<ArenaProjectileState[]>([]);
   const serverHazardsRef = useRef<ArenaHazardState[]>([]);
+  const worldPickupsRef = useRef<WorldWeaponPickup[]>([]);
+  const worldPickupMeshesRef = useRef<Map<string, THREE.Group>>(new Map());
+  const nametagSpritesRef = useRef<Map<string, THREE.Sprite>>(new Map());
+  const localWeaponMeshRef = useRef<THREE.Group | null>(null);
+  const equippedWeaponRef = useRef<WeaponType | null>(null);
+  const nearbyPickupRef = useRef<WorldWeaponPickup | null>(null);
 
   // Three.js mutable scene handles
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -231,6 +304,8 @@ export default function App() {
         name: string;
         health?: number;
         isAlive?: boolean;
+        isNpc?: boolean;
+        weapon?: WeaponType | null;
       }
     >
   >(new Map());
@@ -283,57 +358,43 @@ export default function App() {
   // --------------------------------------------------------------------------
   // Combat Actions: Fire, Boost, Dodge
   // --------------------------------------------------------------------------
-  const fireWeapon = useCallback(() => {
-    if (gameModeRef.current !== 'battle_arena' || !isAlive) return;
-    if (!equippedWeapon || ammo <= 0) {
-      showToast('⚠️ No weapon equipped! Drive over glowing crates to pick up weapons.');
-      return;
+  const selectWeaponSlot = useCallback((slot: number) => {
+    const list = gameModeRef.current === 'battle_arena' ? WEAPON_SLOT_ORDER : STREET_WEAPON_ORDER;
+    const wType = list[slot - 1];
+    if (!wType) return;
+    const owned = weaponInventory[wType] || 0;
+    if (owned <= 0) return;
+    setEquippedWeapon(wType);
+    setAmmo(owned);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'SELECT_WEAPON', slot, weapon: wType }));
     }
+  }, [weaponInventory]);
+
+  const fireWeapon = useCallback(() => {
+    if (!isAlive) return;
+    if (!equippedWeapon || ammo <= 0) return;
 
     const now = Date.now();
     const wCfg = WEAPON_CONFIGS[equippedWeapon];
     if (now - lastFireTimeRef.current < wCfg.cooldownMs) return;
     lastFireTimeRef.current = now;
-
-    // Snappy procedural client sound
-    switch (equippedWeapon) {
-      case 'machinegun':
-        playMachineGunFX();
-        break;
-      case 'rocket':
-        playRocketLaunchFX();
-        break;
-      case 'grenade':
-        playGrenadeLaunchFX();
-        break;
-      case 'firecracker':
-        playFirecrackerFX();
-        break;
-      case 'emp':
-        playEmpShockwaveFX();
-        break;
-      case 'oil':
-      case 'spike':
-        playHazardDropFX(equippedWeapon);
-        break;
-      case 'homing':
-        playRocketLaunchFX();
-        break;
-    }
-
-    // Decrement local predicted ammo
-    setAmmo(prev => {
-      const next = prev - 1;
-      if (next <= 0) {
-        setEquippedWeapon(null);
-      }
-      return Math.max(0, next);
-    });
+    setWeaponCooldownMs(wCfg.cooldownMs);
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'FIRE_WEAPON' }));
     }
-  }, [equippedWeapon, ammo, isAlive, showToast]);
+  }, [equippedWeapon, ammo, isAlive]);
+
+  useEffect(() => {
+    equippedWeaponRef.current = equippedWeapon;
+  }, [equippedWeapon]);
+
+  const collectNearbyPickup = useCallback((pickupId?: string) => {
+    const id = typeof pickupId === 'string' ? pickupId : nearbyPickupRef.current?.id;
+    if (!id || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: 'PICKUP_WEAPON', pickupId: id }));
+  }, []);
 
   const useBoost = useCallback(() => {
     if (gameModeRef.current !== 'battle_arena' || !isAlive) return;
@@ -378,11 +439,14 @@ export default function App() {
     const timer = setInterval(() => {
       setBoostCooldownTimer(prev => Math.max(0, parseFloat((prev - 0.1).toFixed(1))));
       setDodgeCooldownTimer(prev => Math.max(0, parseFloat((prev - 0.1).toFixed(1))));
+      setWeaponCooldownMs(prev => Math.max(0, prev - 100));
     }, 100);
     return () => clearInterval(timer);
   }, []);
 
   // Claim Mission Reward with server idempotency
+  const claimMissionRewardRef = useRef<(m: MissionDefinition) => void>(() => undefined);
+
   const claimMissionReward = useCallback(
     async (m: MissionDefinition) => {
       playRewardChime();
@@ -424,6 +488,7 @@ export default function App() {
     },
     [showToast]
   );
+  claimMissionRewardRef.current = claimMissionReward;
 
   // Start a chosen mission
   const startMission = useCallback(
@@ -514,13 +579,23 @@ export default function App() {
 
       keysRef.current[e.code] = true;
 
-      // Combat key triggers
-      if (gameModeRef.current === 'battle_arena' && !isChatOpen && !isInputFocused) {
+      if (!isChatOpen && !isInputFocused) {
         if (e.code === 'Space') {
           e.preventDefault();
           fireWeapon();
+        }
+        if (e.code === 'KeyE') {
+          e.preventDefault();
+          collectNearbyPickup();
+        }
+        if (/^Digit[1-8]$/.test(e.code) || /^Numpad[1-8]$/.test(e.code)) {
+          e.preventDefault();
+          selectWeaponSlot(Number(e.code.replace(/^\D+/, '')));
           return;
         }
+      }
+
+      if (gameModeRef.current === 'battle_arena' && !isChatOpen && !isInputFocused) {
         if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
           e.preventDefault();
           useBoost();
@@ -558,11 +633,6 @@ export default function App() {
           localStateRef.current.heading = 0;
           showToast('🔄 Vehicle reset to Boulevard centerline');
         }
-      } else if (!isChatOpen) {
-        if (e.code === 'Digit1' || e.code === 'Numpad1') switchVehicle('auto');
-        if (e.code === 'Digit2' || e.code === 'Numpad2') switchVehicle('taxi');
-        if (e.code === 'Digit3' || e.code === 'Numpad3') switchVehicle('police');
-        if (e.code === 'Digit4' || e.code === 'Numpad4') switchVehicle('bike');
       }
     };
 
@@ -570,19 +640,29 @@ export default function App() {
       keysRef.current[e.code] = false;
     };
 
+    const onMouseDown = (e: MouseEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'SELECT') return;
+      if (!isChatOpen) {
+        fireWeapon();
+      }
+    };
+
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('mousedown', onMouseDown);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('mousedown', onMouseDown);
     };
-  }, [isChatOpen, switchVehicle, fireWeapon, useBoost, useDodge, showToast]);
+  }, [isChatOpen, switchVehicle, fireWeapon, selectWeaponSlot, collectNearbyPickup, useBoost, useDodge, showToast]);
 
   // --------------------------------------------------------------------------
   // Initialize Three.js Game Scene & Loop
   // --------------------------------------------------------------------------
   useEffect(() => {
-    if (!mountRef.current) return;
+    if (!hasStarted || !mountRef.current) return;
 
     // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: window.devicePixelRatio < 2, powerPreference: 'high-performance' });
@@ -601,8 +681,13 @@ export default function App() {
     camHeadingRef.current = localStateRef.current.heading;
 
     // Build Srinagar World
-    const world = buildSrinagarWorld(scene);
-    worldObjectsRef.current = world;
+    try {
+      const world = buildSrinagarWorld(scene);
+      worldObjectsRef.current = world;
+    } catch (err) {
+      console.error('[GTA Kashmir] Failed to build Srinagar world:', err);
+      showToast('World failed to load. Refresh the page.');
+    }
 
     // Build Battle Arena Manager
     const arenaManager = buildBattleArena(scene);
@@ -644,6 +729,7 @@ export default function App() {
     wsRef.current = ws;
 
     ws.onopen = () => {
+      setPresence(prev => ({ ...prev, connected: true }));
       ws.send(
         JSON.stringify({
           type: 'JOIN',
@@ -651,8 +737,14 @@ export default function App() {
           name: callsign,
           vehicle: selectedVehicle,
           mode: gameModeRef.current,
+          enterRoom: gameModeRef.current === 'battle_arena',
         })
       );
+    };
+
+    ws.onclose = () => {
+      setPresence(prev => ({ ...prev, connected: false, online: 0, inRoom: 0, inMatch: 0, waiting: 0, bots: 0 }));
+      setConnectedPlayersCount(0);
     };
 
     ws.onmessage = event => {
@@ -669,21 +761,34 @@ export default function App() {
           if (msg.crates) {
             serverCratesRef.current = msg.crates;
           }
+          if (msg.worldPickups) {
+            worldPickupsRef.current = msg.worldPickups;
+          }
           if (msg.matchState) {
             setMatchState(msg.matchState);
           }
+          if (msg.presence) {
+            setPresence(msg.presence);
+            setConnectedPlayersCount(msg.presence.online);
+          }
         } else if (msg.type === 'STATE_SNAPSHOT') {
           const players: PlayerServerState[] = msg.players || [];
-          setConnectedPlayersCount(players.length);
+          if (msg.presence) {
+            setPresence(msg.presence);
+            setConnectedPlayersCount(msg.presence.online);
+          } else {
+            setConnectedPlayersCount(players.filter(p => !p.isNpc).length);
+          }
 
           if (msg.crates) serverCratesRef.current = msg.crates;
+          if (msg.worldPickups) worldPickupsRef.current = msg.worldPickups;
           if (msg.projectiles) serverProjectilesRef.current = msg.projectiles;
           if (msg.hazards) serverHazardsRef.current = msg.hazards;
           if (msg.matchState) {
             setMatchState(msg.matchState);
-            if (msg.matchState.state === 'finished' && !isMatchResultsOpen) {
-              setIsMatchResultsOpen(true);
-            }
+            if (msg.matchState.announcement) setServerAnnouncement(msg.matchState.announcement);
+            const phase = msg.matchState.state;
+            setIsMatchResultsOpen(phase === 'finished' || phase === 'celebration');
           }
 
           // Sync local combat data from server snapshot
@@ -692,12 +797,15 @@ export default function App() {
             setPlayerHealth(localServerPlayer.combat.health);
             setPlayerShield(localServerPlayer.combat.shield);
             setKills(localServerPlayer.combat.kills);
+            setDeaths(localServerPlayer.combat.deaths || 0);
             setDamageDealt(localServerPlayer.combat.damageDealt);
             setIsAlive(localServerPlayer.combat.isAlive);
-            if (localServerPlayer.combat.weapon) {
-              setEquippedWeapon(localServerPlayer.combat.weapon);
-              setAmmo(localServerPlayer.combat.ammo);
+            setWaitingForRound(!!localServerPlayer.waitingForRound);
+            if (localServerPlayer.combat.inventory) {
+              setWeaponInventory(localServerPlayer.combat.inventory);
             }
+            setEquippedWeapon(localServerPlayer.combat.weapon);
+            setAmmo(localServerPlayer.combat.ammo);
           }
 
           // Remote vehicles
@@ -715,11 +823,22 @@ export default function App() {
               name: p.name,
               health: p.combat?.health,
               isAlive: p.combat?.isAlive,
+              isNpc: !!p.isNpc,
+              weapon: p.combat?.weapon || null,
             });
 
-            // Ensure remote mesh exists in scene
+            const existing = remoteVehicleBundlesRef.current.get(p.id);
+            if (existing && existing.root.userData.vehicle !== p.vehicle) {
+              scene.remove(existing.root);
+              nametagSpritesRef.current.delete(p.id);
+              remoteVehicleBundlesRef.current.delete(p.id);
+            }
             if (!remoteVehicleBundlesRef.current.has(p.id)) {
               const rMesh = createVehicleMesh(p.vehicle);
+              rMesh.root.userData.vehicle = p.vehicle;
+              const tag = makeNametagSprite(p.name, !!p.isNpc);
+              rMesh.root.add(tag);
+              nametagSpritesRef.current.set(p.id, tag);
               remoteVehicleBundlesRef.current.set(p.id, rMesh);
               scene.add(rMesh.root);
             }
@@ -732,14 +851,86 @@ export default function App() {
               scene.remove(bundle.root);
               remoteVehicleBundlesRef.current.delete(rId);
               remoteTargetsRef.current.delete(rId);
+              nametagSpritesRef.current.delete(rId);
+            }
+          }
+        } else if (msg.type === 'PRESENCE_UPDATE' || msg.type === 'PONG') {
+          if (msg.presence) {
+            setPresence(msg.presence);
+            setConnectedPlayersCount(msg.presence.online);
+          }
+          if (msg.matchState) setMatchState(msg.matchState);
+        } else if (msg.type === 'ROOM_JOINED') {
+          if (msg.matchState) setMatchState(msg.matchState);
+          if (msg.presence) {
+            setPresence(msg.presence);
+            setConnectedPlayersCount(msg.presence.online);
+          }
+          setWaitingForRound(!!msg.waitingForRound);
+        } else if (msg.type === 'WORLD_WEAPON_SPAWNED' && msg.pickup) {
+          const list = worldPickupsRef.current.filter(p => p.id !== msg.pickup.id);
+          list.push(msg.pickup);
+          worldPickupsRef.current = list;
+        } else if (msg.type === 'WORLD_WEAPON_EXPIRED' || msg.type === 'WORLD_WEAPON_COLLECTED') {
+          worldPickupsRef.current = worldPickupsRef.current.filter(p => p.id !== msg.pickupId);
+          if (nearbyPickupRef.current?.id === msg.pickupId) {
+            nearbyPickupRef.current = null;
+            setNearbyPickup(null);
+          }
+          if (msg.type === 'WORLD_WEAPON_COLLECTED') {
+            if (msg.collectorId === playerIdRef.current) {
+              if (msg.inventory) setWeaponInventory(msg.inventory);
+              setEquippedWeapon(msg.weapon);
+              setAmmo(msg.ammo);
+              const wCfg = WEAPON_CONFIGS[msg.weapon as WeaponType];
+              showToast(`Picked up ${wCfg?.icon || ''} ${wCfg?.name || msg.weapon}`);
             }
           }
         } else if (msg.type === 'WEAPON_ACQUIRED') {
           playCratePickupFX();
           setEquippedWeapon(msg.weapon);
           setAmmo(msg.ammo);
+          if (msg.inventory) setWeaponInventory(msg.inventory);
           const wCfg = WEAPON_CONFIGS[msg.weapon as WeaponType];
           showToast(`📦 Acquired: ${wCfg?.icon} ${wCfg?.name} (${msg.ammo}x)`);
+        } else if (msg.type === 'WEAPON_FIRED') {
+          if (msg.ownerId === playerIdRef.current) {
+            const fired = msg.weaponType as WeaponType;
+            switch (fired) {
+              case 'machinegun':
+                playMachineGunFX();
+                break;
+              case 'rocket':
+              case 'homing':
+                playRocketLaunchFX();
+                break;
+              case 'grenade':
+                playGrenadeLaunchFX();
+                break;
+              case 'firecracker':
+                playFirecrackerFX();
+                break;
+              case 'emp':
+                playEmpShockwaveFX();
+                break;
+              case 'oil':
+              case 'spike':
+                playHazardDropFX(fired);
+                break;
+              case 'kangri':
+                playFirecrackerFX();
+                break;
+              case 'pistol':
+              case 'rifle':
+              case 'shotgun':
+                playMachineGunFX();
+                break;
+              case 'bat':
+              case 'pipe':
+                playCrashFX();
+                break;
+            }
+          }
         } else if (msg.type === 'DAMAGE_EVENT') {
           const ev: DamageEvent = msg.event;
           arenaManagerRef.current?.triggerDamageNumberFX(ev);
@@ -757,6 +948,9 @@ export default function App() {
           if (msg.effect === 'emp_shockwave') {
             playEmpShockwaveFX();
             arenaManagerRef.current?.triggerEmpShockwaveFX(msg.x, msg.z, msg.radius || 14.0);
+          } else if (msg.effect === 'kangri_burst') {
+            playFirecrackerFX();
+            arenaManagerRef.current?.triggerKangriBurstFX(msg.x, msg.z);
           }
         } else if (msg.type === 'PLAYER_ELIMINATED') {
           playEliminationHorn();
@@ -770,9 +964,25 @@ export default function App() {
 
           if (msg.victimId === playerIdRef.current) {
             setIsAlive(false);
+            setServerAnnouncement('YOU WERE ELIMINATED');
             showToast('💀 You were ELIMINATED! Spectating remaining combatants...');
           } else if (msg.attackerId === playerIdRef.current) {
             showToast(`🎯 ELIMINATION CONFIRMED: ${msg.victimName}!`);
+          }
+        } else if (msg.type === 'MATCH_ANNOUNCEMENT' || msg.type === 'MATCH_STATE_CHANGE' || msg.type === 'MATCH_STARTED' || msg.type === 'MATCH_INTERMISSION' || msg.type === 'WINNER_CELEBRATION') {
+          if (msg.matchState) setMatchState(msg.matchState);
+          if (msg.presence) {
+            setPresence(msg.presence);
+            setConnectedPlayersCount(msg.presence.online);
+          }
+          if (msg.announcement || msg.matchState?.announcement) {
+            setServerAnnouncement(msg.announcement || msg.matchState.announcement);
+          }
+          if (msg.type === 'WINNER_CELEBRATION' || msg.type === 'MATCH_FINISHED') {
+            setIsMatchResultsOpen(true);
+          }
+          if (msg.type === 'MATCH_STARTED' || msg.type === 'MATCH_INTERMISSION') {
+            setIsMatchResultsOpen(false);
           }
         } else if (msg.type === 'MISSILE_WARNING') {
           playMissileLockWarningFX();
@@ -863,13 +1073,13 @@ export default function App() {
             reportClash('East Arena Lake Barrier');
             loc.speed = -loc.speed * 0.35;
           }
-          if (loc.z <= ROAD_BOUNDS.MIN_Z) {
+          if (loc.z <= ROAD_BOUNDS.MIN_Z && loc.x >= -24 && loc.x <= 18) {
             loc.z = ROAD_BOUNDS.MIN_Z;
-            reportClash('Dalgate Game End Boundary Wall');
+            reportClash('JK Police Dalgate Barricade');
             loc.speed = -loc.speed * 0.4;
           } else if (loc.z >= ROAD_BOUNDS.MAX_Z && loc.x >= -24 && loc.x <= 18) {
             loc.z = ROAD_BOUNDS.MAX_Z;
-            reportClash('North Checkpoint Barrier Wall');
+            reportClash('JK Police Burger Barn Checkpoint');
             loc.speed = -loc.speed * 0.45;
           }
         } else {
@@ -911,16 +1121,28 @@ export default function App() {
             loc.speed = -loc.speed * 0.35;
           }
 
-          if (loc.z <= -430.0) {
-            loc.z = -430.0;
-            reportClash('Dalgate Game End Boundary Wall');
+          if (loc.z <= ROAD_BOUNDS.MIN_Z && loc.x >= -24 && loc.x <= 18) {
+            loc.z = ROAD_BOUNDS.MIN_Z;
+            reportClash('JK Police Dalgate Barricade');
             loc.speed = -loc.speed * 0.4;
           }
 
-          if (loc.z >= 411.4 && loc.x >= -26 && loc.x <= 18) {
-            loc.z = 411.4;
-            reportClash('North Checkpoint Barrier Wall');
+          if (loc.z >= ROAD_BOUNDS.MAX_Z && loc.x >= -24 && loc.x <= 18) {
+            loc.z = ROAD_BOUNDS.MAX_Z;
+            reportClash('JK Police Burger Barn Checkpoint');
             loc.speed = -loc.speed * 0.45;
+          }
+
+          // JK Police sentry booths at both road endings
+          if (loc.x > -17 && loc.x < -12 && loc.z > 406 && loc.z < 415) {
+            loc.x = loc.x < -14.5 ? -17 : -12;
+            reportClash('JK Police Post No. 4');
+            loc.speed *= 0.5;
+          }
+          if (loc.x > -17 && loc.x < -12 && loc.z > -430 && loc.z < -424) {
+            loc.x = loc.x < -14.5 ? -17 : -12;
+            reportClash('JK Police Dalgate Post');
+            loc.speed *= 0.5;
           }
         }
 
@@ -964,6 +1186,7 @@ export default function App() {
             bundle.lightBar.children[1].visible = strobe;
             bundle.lightBar.children[2].visible = !strobe;
           }
+          ensureHeldWeapon(bundle, equippedWeaponRef.current);
         }
 
         // 20 Hz WebSocket Input Transmission
@@ -977,7 +1200,8 @@ export default function App() {
               steer: loc.steerAngle,
               throttle: up ? 1 : 0,
               brake: dn ? 1 : 0,
-              handbrake: space && gameModeRef.current === 'free_roam',
+              handbrake: space && gameModeRef.current === 'free_roam' && !equippedWeaponRef.current,
+              fire: space && !isChatOpen,
               vehicleType: loc.vehicle,
               clientTime: Date.now(),
             };
@@ -1001,6 +1225,7 @@ export default function App() {
           }
           // Hide eliminated players
           bundle.root.visible = target.isAlive !== false;
+          ensureHeldWeapon(bundle, target.weapon || null);
         }
       }
 
@@ -1014,6 +1239,42 @@ export default function App() {
         );
       }
 
+      const pickupMeshes = worldPickupMeshesRef.current;
+      const livePickups = worldPickupsRef.current;
+      const liveIds = new Set(livePickups.map(p => p.id));
+      for (const [id, mesh] of pickupMeshes.entries()) {
+        if (!liveIds.has(id)) {
+          scene.remove(mesh);
+          pickupMeshes.delete(id);
+        }
+      }
+      for (const p of livePickups) {
+        let mesh = pickupMeshes.get(p.id);
+        if (!mesh) {
+          mesh = createWorldPickupMesh(p.weapon);
+          mesh.position.set(p.x, p.y || 0, p.z);
+          scene.add(mesh);
+          pickupMeshes.set(p.id, mesh);
+        }
+        updatePickupVisual(mesh, dt, clock);
+      }
+
+      let closest: WorldWeaponPickup | null = null;
+      let closestD = 5.2 * 5.2;
+      for (const p of livePickups) {
+        const dx = p.x - loc.x;
+        const dz = p.z - loc.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < closestD) {
+          closestD = d2;
+          closest = p;
+        }
+      }
+      if (nearbyPickupRef.current?.id !== closest?.id) {
+        nearbyPickupRef.current = closest;
+        setNearbyPickup(closest);
+      }
+
       // Active Mission Checkpoint Detection (in Free Roam)
       const curMission = activeMissionRef.current;
       if (curMission && checkpointMeshRef.current && gameModeRef.current === 'free_roam') {
@@ -1025,7 +1286,7 @@ export default function App() {
         const dist = Math.hypot(loc.x - targetPt.x, loc.z - targetPt.z);
         if (dist < 6.5) {
           if (step + 1 >= curMission.checkpoints.length) {
-            claimMissionReward(curMission);
+            claimMissionRewardRef.current(curMission);
           } else {
             missionStepRef.current = step + 1;
             setMissionStep(step + 1);
@@ -1074,7 +1335,7 @@ export default function App() {
 
         const lookTargetX = loc.x + vehFx * lookAheadDist * lookDir;
         const lookTargetZ = loc.z + vehFz * lookAheadDist * lookDir;
-        const lookTargetY = profile.lookHeight;
+        const lookTargetY = profile.lookHeight + 0.25;
 
         // 4. Subtle FOV adjustment (minimal change: 60 deg to max 63.5 deg to avoid shrinking vehicle)
         const targetFov = profile.baseFov + speedRatio * profile.maxFovBoost;
@@ -1097,7 +1358,7 @@ export default function App() {
         // Because camFx and camFz are unit circle coordinates from camHeadingRef,
         // horizontal distance is ALWAYS exactly targetDist, guaranteeing zero speed lag!
         cam.position.x = loc.x - camFx * targetDist + sShakeX + cShakeX;
-        cam.position.y = targetHeight + sShakeY + cShakeY;
+        cam.position.y = targetHeight + 0.15 + sShakeY + cShakeY;
         cam.position.z = loc.z - camFz * targetDist + cShakeZ;
 
         cam.lookAt(lookTargetX, lookTargetY, lookTargetZ);
@@ -1144,18 +1405,42 @@ export default function App() {
     };
 
     animId = requestAnimationFrame(tick);
+    const pingTimer = window.setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'PING', time: Date.now() }));
+      }
+    }, 4000);
 
     return () => {
       cancelAnimationFrame(animId);
+      window.clearInterval(pingTimer);
       window.removeEventListener('resize', handleResize);
-      if (ws.readyState === WebSocket.OPEN) ws.close();
-      arenaManager.dispose();
-      renderer.dispose();
-      if (mountRef.current && renderer.domElement) {
-        mountRef.current.removeChild(renderer.domElement);
+      try {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+      } catch {
+        /* ignore */
       }
+      try {
+        arenaManager.dispose();
+      } catch {
+        /* ignore */
+      }
+      worldPickupMeshesRef.current.forEach(mesh => scene.remove(mesh));
+      worldPickupMeshesRef.current.clear();
+      nametagSpritesRef.current.clear();
+      try {
+        renderer.dispose();
+        renderer.domElement.remove();
+      } catch {
+        /* ignore */
+      }
+      worldObjectsRef.current = null;
+      arenaManagerRef.current = null;
+      localVehicleBundleRef.current = null;
+      rendererRef.current = null;
+      sceneRef.current = null;
     };
-  }, [hasStarted, callsign, selectedVehicle, claimMissionReward, showToast]);
+  }, [hasStarted]);
 
   // Minimap Radar Drawing
   const drawMinimap = () => {
@@ -1222,6 +1507,26 @@ export default function App() {
         ctx.font = 'bold 8px sans-serif';
         ctx.fillText('NISHAT BAGH', mx(-22), my(9) - 3.5);
       }
+
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(mx(18), my(ROAD_BOUNDS.MAX_Z));
+      ctx.lineTo(mx(-24), my(ROAD_BOUNDS.MAX_Z));
+      ctx.moveTo(mx(18), my(ROAD_BOUNDS.MIN_Z));
+      ctx.lineTo(mx(-24), my(ROAD_BOUNDS.MIN_Z));
+      ctx.stroke();
+    }
+
+    for (const p of worldPickupsRef.current) {
+      const px = mx(p.x);
+      const py = my(p.z);
+      if (px >= 0 && px <= 160 && py >= 0 && py <= 128) {
+        ctx.fillStyle = p.weapon === 'kangri' ? '#fb923c' : '#facc15';
+        ctx.beginPath();
+        ctx.arc(px, py, 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // Remote Players / Bots Blips
@@ -1229,7 +1534,7 @@ export default function App() {
       const rx = mx(target.x);
       const ry = my(target.z);
       if (rx >= 0 && rx <= 160 && ry >= 0 && ry <= 128) {
-        ctx.fillStyle = target.vehicle === 'police' ? '#3b82f6' : '#f59e0b';
+        ctx.fillStyle = target.isNpc ? '#4ade80' : target.vehicle === 'police' ? '#3b82f6' : '#f59e0b';
         ctx.beginPath();
         ctx.arc(rx, ry, 3.5, 0, Math.PI * 2);
         ctx.fill();
@@ -1408,31 +1713,39 @@ export default function App() {
               <span className="text-cyan-400">{callsign}</span>
               <span>·</span>
               <span className="flex items-center gap-1">
-                <Users className="w-3.5 h-3.5" /> {connectedPlayersCount} Online
+                <Users className="w-3.5 h-3.5" />
+                {presence.connected
+                  ? `${connectedPlayersCount} players · ${presence.bots} AI bots`
+                  : 'Disconnected'}
               </span>
+              <span className="text-rose-300 font-mono">HP {playerHealth}</span>
             </div>
           </div>
 
           {/* Top Center-Sub: Match Info in Battle Arena */}
           {gameMode === 'battle_arena' && (
-            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-4 px-5 py-2 bg-slate-950/90 border border-slate-700/80 rounded-2xl shadow-xl backdrop-blur-md pointer-events-none text-xs font-bold font-['Outfit']">
-              <div className="flex items-center gap-1.5 text-amber-400 font-mono text-sm">
-                <span>⏱️</span>
-                <span>
-                  {Math.floor(matchState.timerSec / 60)}:
-                  {String(matchState.timerSec % 60).padStart(2, '0')}
-                </span>
+            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1 pointer-events-none">
+              <div className="flex items-center gap-3 px-5 py-2 bg-slate-950/90 border border-slate-700/80 rounded-2xl shadow-xl backdrop-blur-md text-xs font-bold font-['Outfit']">
+                <div className="flex items-center gap-1.5 text-amber-400 font-mono text-sm uppercase">
+                  <span>{matchState.state}</span>
+                  <span>
+                    {Math.floor(matchState.timerSec / 60)}:
+                    {String(Math.max(0, matchState.timerSec) % 60).padStart(2, '0')}
+                  </span>
+                </div>
+                <div className="h-4 w-[1px] bg-slate-700" />
+                <span className="text-cyan-300">{presence.online} PLAYERS</span>
+                <span className="text-emerald-300">{presence.bots} AI BOTS</span>
+                <span className="text-sky-300">{presence.inRoom} ROOM</span>
+                <span className="text-emerald-400">{matchState.playersAlive} ALIVE</span>
+                <span className="text-amber-200">{presence.waiting} WAITING</span>
+                <span className="text-red-400">{kills} K / {deaths} D</span>
               </div>
-              <div className="h-4 w-[1px] bg-slate-700" />
-              <div className="flex items-center gap-1.5 text-emerald-400">
-                <Users className="w-3.5 h-3.5" />
-                <span>{matchState.playersAlive} ALIVE</span>
-              </div>
-              <div className="h-4 w-[1px] bg-slate-700" />
-              <div className="flex items-center gap-1.5 text-red-400">
-                <Skull className="w-3.5 h-3.5" />
-                <span>{kills} KILLS</span>
-              </div>
+              {(serverAnnouncement || waitingForRound) && (
+                <div className="px-4 py-1 bg-amber-500/90 text-slate-950 text-[11px] font-black tracking-wider rounded-lg">
+                  {waitingForRound && matchState.state === 'active' ? 'WAITING FOR NEXT ROUND' : serverAnnouncement}
+                </div>
+              )}
             </div>
           )}
 
@@ -1441,47 +1754,47 @@ export default function App() {
             <div className="hidden md:flex items-center gap-1 bg-slate-950/80 border border-slate-700/70 p-1 rounded-xl backdrop-blur-md shadow-xl">
               <button
                 onClick={() => switchVehicle('auto')}
-                title="Switch to Electric Battery Auto (Hotkey 1)"
+                title="Switch to Electric Battery Auto"
                 className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                   selectedVehicle === 'auto'
                     ? 'bg-cyan-500 text-slate-950 font-black shadow-md shadow-cyan-500/30'
                     : 'text-slate-300 hover:text-white hover:bg-slate-800'
                 }`}
               >
-                ⚡ [1] Auto
+                ⚡ Auto
               </button>
               <button
                 onClick={() => switchVehicle('taxi')}
-                title="Switch to Ambassador Taxi (Hotkey 2)"
+                title="Switch to Ambassador Taxi"
                 className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                   selectedVehicle === 'taxi'
                     ? 'bg-cyan-500 text-slate-950 font-black shadow-md shadow-cyan-500/30'
                     : 'text-slate-300 hover:text-white hover:bg-slate-800'
                 }`}
               >
-                🚕 [2] Taxi
+                🚕 Taxi
               </button>
               <button
                 onClick={() => switchVehicle('police')}
-                title="Switch to Police Cruiser (Hotkey 3)"
+                title="Switch to Police Cruiser"
                 className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                   selectedVehicle === 'police'
                     ? 'bg-cyan-500 text-slate-950 font-black shadow-md shadow-cyan-500/30'
                     : 'text-slate-300 hover:text-white hover:bg-slate-800'
                 }`}
               >
-                🚨 [3] Police
+                🚨 Police
               </button>
               <button
                 onClick={() => switchVehicle('bike')}
-                title="Switch to Bullet 350 (Hotkey 4)"
+                title="Switch to Bullet 350"
                 className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                   selectedVehicle === 'bike'
                     ? 'bg-cyan-500 text-slate-950 font-black shadow-md shadow-cyan-500/30'
                     : 'text-slate-300 hover:text-white hover:bg-slate-800'
                 }`}
               >
-                🏍️ [4] Bullet
+                🏍️ Bullet
               </button>
             </div>
 
@@ -1543,6 +1856,26 @@ export default function App() {
           {toastMessage && (
             <div className="absolute top-36 left-1/2 -translate-x-1/2 z-30 px-6 py-2.5 bg-slate-900/95 border border-cyan-500/60 rounded-xl shadow-2xl text-sm font-bold text-white font-['Outfit'] backdrop-blur-md pointer-events-none animate-fade-in-down">
               {toastMessage}
+            </div>
+          )}
+
+          {nearbyPickup && gameMode === 'free_roam' && (
+            <div className="absolute bottom-36 left-1/2 -translate-x-1/2 z-30 px-6 py-3 bg-slate-950/95 border border-amber-400/80 rounded-2xl shadow-2xl text-center font-['Outfit'] pointer-events-auto">
+              <div className="text-amber-300 text-lg font-black tracking-wide">
+                PRESS E TO PICK UP
+              </div>
+              <div className="text-white text-sm font-bold">
+                {WEAPON_CONFIGS[nearbyPickup.weapon].icon} {WEAPON_CONFIGS[nearbyPickup.weapon].name}
+              </div>
+              <div className="text-[11px] text-slate-300 max-w-xs mb-2">
+                {WEAPON_CONFIGS[nearbyPickup.weapon].description}
+              </div>
+              <button
+                onClick={() => collectNearbyPickup(nearbyPickup.id)}
+                className="px-4 py-1.5 rounded-lg bg-amber-500 text-slate-950 text-xs font-black"
+              >
+                PICK UP
+              </button>
             </div>
           )}
 
@@ -1643,7 +1976,7 @@ export default function App() {
                     {currentWeaponDef ? currentWeaponDef.name : 'Drive over crates!'}
                   </div>
                   <div className="text-xs font-mono font-bold mt-0.5 text-cyan-400">
-                    {currentWeaponDef ? `AMMO: ${ammo} SHOTS` : 'CRATES: 3-5 ACTIVE'}
+                    {currentWeaponDef ? `AMMO: ${ammo} · CD: ${(weaponCooldownMs / 1000).toFixed(1)}s` : 'DRIVE OVER CRATES'}
                   </div>
                 </div>
 
@@ -1661,6 +1994,31 @@ export default function App() {
                 </button>
               </div>
 
+              <div className="flex flex-wrap justify-end gap-1 max-w-[360px]">
+                {WEAPON_SLOT_ORDER.map((wType, idx) => {
+                  const owned = weaponInventory[wType] || 0;
+                  const def = WEAPON_CONFIGS[wType];
+                  const active = equippedWeapon === wType;
+                  return (
+                    <button
+                      key={wType}
+                      onClick={() => selectWeaponSlot(idx + 1)}
+                      disabled={owned <= 0}
+                      className={`px-1.5 py-1 rounded-md text-[10px] font-bold border ${
+                        active
+                          ? 'bg-amber-500 text-slate-950 border-amber-300'
+                          : owned > 0
+                          ? 'bg-slate-900/90 text-white border-slate-600'
+                          : 'bg-slate-950/60 text-slate-600 border-slate-800 cursor-not-allowed'
+                      }`}
+                      title={`${idx + 1}: ${def.name}`}
+                    >
+                      {idx + 1} {def.icon} {owned}
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* Speedometer Cluster */}
               <div className="flex items-baseline justify-end gap-1 font-['Outfit'] pr-2">
                 <span className="text-4xl font-black text-cyan-400 tabular-nums drop-shadow-lg">
@@ -1674,13 +2032,62 @@ export default function App() {
           {/* Bottom-Right: Speedometer Cluster (Free Roam) */}
           {gameMode === 'free_roam' && (
             <div className="absolute bottom-4 right-4 z-20 text-right pointer-events-none">
-              <div className="flex items-baseline justify-end gap-1 font-['Outfit']">
+              <div className="flex flex-col items-end gap-2 pointer-events-auto">
+                <div className="flex items-center gap-3 p-3 bg-slate-950/90 border border-slate-700/80 rounded-2xl shadow-xl backdrop-blur-md">
+                  <div className="text-3xl">{currentWeaponDef ? currentWeaponDef.icon : '🔫'}</div>
+                  <div className="text-left font-['Outfit']">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Street Weapon</div>
+                    <div className="text-sm font-black text-white leading-tight">
+                      {currentWeaponDef ? currentWeaponDef.name : 'Collect a pickup'}
+                    </div>
+                    <div className="text-[11px] font-mono text-cyan-400">
+                      {currentWeaponDef ? `AMMO ${ammo} · SPACE to fire` : 'Drive near a glowing pickup'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={fireWeapon}
+                    disabled={!currentWeaponDef || ammo <= 0 || !isAlive}
+                    className={`px-3 py-2 rounded-xl font-black text-xs ${
+                      currentWeaponDef && ammo > 0 && isAlive
+                        ? 'bg-amber-500 text-slate-950'
+                        : 'bg-slate-800 text-slate-500'
+                    }`}
+                  >
+                    FIRE
+                  </button>
+                </div>
+                <div className="flex flex-wrap justify-end gap-1 max-w-[340px]">
+                  {STREET_WEAPON_ORDER.map((wType, idx) => {
+                    const owned = weaponInventory[wType] || 0;
+                    const def = WEAPON_CONFIGS[wType];
+                    const active = equippedWeapon === wType;
+                    return (
+                      <button
+                        key={wType}
+                        onClick={() => selectWeaponSlot(idx + 1)}
+                        disabled={owned <= 0}
+                        className={`px-1.5 py-1 rounded-md text-[10px] font-bold border ${
+                          active
+                            ? 'bg-amber-500 text-slate-950 border-amber-300'
+                            : owned > 0
+                            ? 'bg-slate-900/90 text-white border-slate-600'
+                            : 'bg-slate-950/60 text-slate-600 border-slate-800 cursor-not-allowed'
+                        }`}
+                        title={`${idx + 1}: ${def.name}`}
+                      >
+                        {idx + 1} {def.icon} {owned}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex items-baseline justify-end gap-1 font-['Outfit'] mt-2 pointer-events-none">
                 <span className="text-5xl font-black text-cyan-400 tabular-nums drop-shadow-lg">
                   {speedKmh}
                 </span>
                 <span className="text-sm font-bold text-slate-400 tracking-wider">KM/H</span>
               </div>
-              <div className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+              <div className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-0.5 pointer-events-none">
                 {VEHICLE_CONFIGS[selectedVehicle]?.name || 'Vehicle'}
               </div>
             </div>
@@ -1834,58 +2241,52 @@ export default function App() {
         </div>
       )}
 
-      {/* Match Results Modal */}
+      {/* Match Results / Winner Celebration (auto-advances with the round) */}
       {isMatchResultsOpen && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
-          <div className="bg-slate-900 border-2 border-amber-500/80 rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl text-center space-y-5 animate-fade-in-up">
-            <div className="text-5xl">🏆</div>
-            <h2 className="text-3xl font-black text-white font-['Outfit'] tracking-tight">
-              MATCH CONCLUDED!
+        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md pointer-events-none">
+          <div className="bg-slate-900 border-2 border-amber-500/80 rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl text-center space-y-4 animate-fade-in-up">
+            <div className="text-6xl animate-bounce">🎆🏆🎆</div>
+            <h2 className="text-4xl font-black text-amber-300 font-['Outfit'] tracking-tight">
+              {matchState.sharedVictory ? 'SHARED VICTORY!' : 'WE HAVE A WINNER!'}
             </h2>
-            <div className="text-lg font-bold text-amber-400 font-['Outfit']">
-              Winner: {matchState.winnerName || 'Combatant'}
+            <div className="text-2xl font-black text-white font-['Outfit']">
+              {matchState.winnerName || 'No Contest'}
+            </div>
+            <div className="text-sm text-amber-200">
+              Next round starts automatically — stay in the room to play.
             </div>
 
-            <div className="grid grid-cols-3 gap-3 p-4 bg-slate-950/70 border border-slate-800 rounded-2xl">
+            <div className="grid grid-cols-4 gap-2 p-4 bg-slate-950/70 border border-slate-800 rounded-2xl">
               <div>
-                <div className="text-xs text-slate-400 font-semibold uppercase">Your Kills</div>
-                <div className="text-2xl font-black text-white font-mono">{kills}</div>
+                <div className="text-[10px] text-slate-400 uppercase">Kills</div>
+                <div className="text-xl font-black font-mono">{kills}</div>
               </div>
               <div>
-                <div className="text-xs text-slate-400 font-semibold uppercase">Damage Dealt</div>
-                <div className="text-2xl font-black text-cyan-400 font-mono">{damageDealt}</div>
+                <div className="text-[10px] text-slate-400 uppercase">Deaths</div>
+                <div className="text-xl font-black font-mono">{deaths}</div>
               </div>
               <div>
-                <div className="text-xs text-slate-400 font-semibold uppercase">Reward</div>
-                <div className="text-2xl font-black text-emerald-400 font-mono">
-                  +₹{kills * 500 + (matchState.winnerId === playerIdRef.current ? 5000 : 1500)}
+                <div className="text-[10px] text-slate-400 uppercase">K/D</div>
+                <div className="text-xl font-black font-mono text-cyan-400">
+                  {kills > 0 && deaths === 0 ? '∞' : (kills / Math.max(1, deaths)).toFixed(2)}
                 </div>
               </div>
+              <div>
+                <div className="text-[10px] text-slate-400 uppercase">Damage</div>
+                <div className="text-xl font-black font-mono text-amber-300">{damageDealt}</div>
+              </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-              <button
-                onClick={() => {
-                  setIsMatchResultsOpen(false);
-                  if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                    wsRef.current.send(JSON.stringify({ type: 'RESTART_ARENA_MATCH' }));
-                  }
-                }}
-                className="w-full sm:w-auto px-7 py-3 bg-gradient-to-r from-red-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-slate-950 font-black text-base rounded-xl shadow-lg cursor-pointer font-['Outfit'] flex items-center justify-center gap-2"
-              >
-                <RefreshCw className="w-4 h-4" /> REMATCH (PLAY AGAIN)
-              </button>
-
-              <button
-                onClick={() => {
-                  setIsMatchResultsOpen(false);
-                  switchGameMode('free_roam');
-                }}
-                className="w-full sm:w-auto px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold text-sm rounded-xl border border-slate-700 cursor-pointer font-['Outfit']"
-              >
-                RETURN TO BOULEVARD
-              </button>
-            </div>
+            {matchState.leaderboard && matchState.leaderboard.length > 0 && (
+              <div className="text-left space-y-1 max-h-40 overflow-y-auto">
+                {matchState.leaderboard.slice(0, 8).map(row => (
+                  <div key={row.playerId} className={`flex items-center justify-between text-xs px-3 py-1.5 rounded-lg ${row.rank <= 3 ? 'bg-amber-950/50 text-amber-200' : 'bg-slate-950/60 text-slate-300'}`}>
+                    <span>#{row.rank} {row.name}</span>
+                    <span className="font-mono">{row.kills}/{row.deaths} · {row.kdDisplay}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

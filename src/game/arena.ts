@@ -23,6 +23,7 @@ export interface ArenaManager {
   ) => void;
   triggerExplosionFX: (x: number, z: number, weaponType: WeaponType, radius?: number) => void;
   triggerEmpShockwaveFX: (x: number, z: number, radius: number) => void;
+  triggerKangriBurstFX: (x: number, z: number) => void;
   triggerDamageNumberFX: (event: DamageEvent) => void;
   dispose: () => void;
 }
@@ -48,21 +49,21 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
   const curbMat = new THREE.MeshLambertMaterial({ color: 0xd9534f }); // Racing red/white curbs
   const curbWhiteMat = new THREE.MeshLambertMaterial({ color: 0xf4f4f4 });
 
-  // NOTE: southWall (at z = -160 near Wazwan Darbar Hotel) and northWall have been permanently removed
-  // so Boulevard Road remains completely open, continuous, and driveable with zero obstructions.
+  // NOTE: southWall at z = -160 near Wazwan Darbar Hotel is removed so Boulevard Road stays open.
+  // Side walls stay north of the hotel (hotel sits near z = -145) and off the driveable lanes.
 
-  // West Boundary Wall (x = ARENA_BOUNDS.MIN_X = -32, behind hotel rows, outside road envelope)
-  const westWall = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.8, 192), wallMat);
-  westWall.position.set(ARENA_BOUNDS.MIN_X, 1.4, -65);
+  // West Boundary Wall (behind hotel row, starts north of Wazwan Darbar)
+  const westWall = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.8, 88), wallMat);
+  westWall.position.set(ARENA_BOUNDS.MIN_X, 1.4, -28);
   arenaGroup.add(westWall);
 
-  // East Boundary Wall / Lake Barrier (x = ARENA_BOUNDS.MAX_X = 20, out in Dal Lake water)
-  const eastWall = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.8, 192), wallMat);
-  eastWall.position.set(ARENA_BOUNDS.MAX_X, 1.4, -65);
+  // East Boundary Wall / Lake Barrier (out in Dal Lake water, same northern span)
+  const eastWall = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.8, 88), wallMat);
+  eastWall.position.set(ARENA_BOUNDS.MAX_X, 1.4, -28);
   arenaGroup.add(eastWall);
 
   // Red/White racing curbs along side boundaries (clear of all 4 road lanes)
-  for (let z = -150; z <= 25; z += 6) {
+  for (let z = -70; z <= 25; z += 6) {
     const isRed = Math.floor(z / 6) % 2 === 0;
     const cMat = isRed ? curbMat : curbWhiteMat;
 
@@ -77,8 +78,8 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
 
   // 2. High-Tech Floodlight Towers at 4 Arena Perimeter Corners
   const towerPositions = [
-    { x: ARENA_BOUNDS.MIN_X + 2, z: -150 },
-    { x: ARENA_BOUNDS.MAX_X - 2, z: -150 },
+    { x: ARENA_BOUNDS.MIN_X + 2, z: -70 },
+    { x: ARENA_BOUNDS.MAX_X - 2, z: -70 },
     { x: ARENA_BOUNDS.MIN_X + 2, z: 20 },
     { x: ARENA_BOUNDS.MAX_X - 2, z: 20 },
   ];
@@ -137,10 +138,8 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
   const tireWhiteMat = mat(0xe8e8e8);
 
   const barrierLocs = [
-    { x: -16, z: -100, rot: 0 },
-    { x: 4, z: -90, rot: 0.3 },
-    { x: -18, z: -40, rot: -0.2 },
-    { x: 6, z: -35, rot: 0 },
+    { x: ARENA_BOUNDS.MIN_X + 4, z: -40, rot: -0.2 },
+    { x: ARENA_BOUNDS.MAX_X - 4, z: -35, rot: 0.15 },
   ];
 
   barrierLocs.forEach(b => {
@@ -283,6 +282,25 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
         const fin1 = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.05, 0.3), mMat);
         fin1.position.z = -0.6;
         pg.add(body, tip, fin1);
+        break;
+      }
+
+      case 'pistol':
+      case 'rifle': {
+        const tracer = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.05, 0.05, 0.7, 6).rotateX(Math.PI / 2),
+          new THREE.MeshBasicMaterial({ color: type === 'rifle' ? 0xfde68a : 0xfacc15 })
+        );
+        pg.add(tracer);
+        break;
+      }
+
+      case 'shotgun': {
+        const pellet = new THREE.Mesh(
+          new THREE.SphereGeometry(0.09, 6, 6),
+          new THREE.MeshBasicMaterial({ color: 0xfb923c })
+        );
+        pg.add(pellet);
         break;
       }
 
@@ -458,6 +476,59 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
     });
   }
 
+  function triggerKangriBurstFX(x: number, z: number) {
+    const g = new THREE.Group();
+    g.position.set(x, 0.55, z);
+    scene.add(g);
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0xff6a1a, transparent: true, opacity: 0.95 });
+    const core = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), coreMat);
+    g.add(core);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xf97316,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.7, 16).rotateX(-Math.PI / 2), ringMat);
+    g.add(ring);
+    const sparks: THREE.Mesh[] = [];
+    for (let i = 0; i < 10; i++) {
+      const sm = new THREE.Mesh(
+        new THREE.SphereGeometry(0.06, 5, 5),
+        new THREE.MeshBasicMaterial({ color: i % 2 ? 0xfacc15 : 0xef4444 })
+      );
+      sm.position.set((Math.random() - 0.5) * 0.4, 0.2, (Math.random() - 0.5) * 0.4);
+      sm.userData.vx = (Math.random() - 0.5) * 6;
+      sm.userData.vy = 2 + Math.random() * 4;
+      sm.userData.vz = (Math.random() - 0.5) * 6;
+      g.add(sm);
+      sparks.push(sm);
+    }
+    let age = 0;
+    activeEffects.push({
+      group: g,
+      update: dt => {
+        age += dt;
+        const t = age / 0.55;
+        core.scale.setScalar(1 + t * 4.2);
+        coreMat.opacity = Math.max(0, 0.95 * (1 - t));
+        ring.scale.setScalar(1 + t * 6);
+        ringMat.opacity = Math.max(0, 0.85 * (1 - t));
+        sparks.forEach(s => {
+          s.position.x += s.userData.vx * dt;
+          s.position.y += s.userData.vy * dt;
+          s.position.z += s.userData.vz * dt;
+          s.userData.vy -= 9 * dt;
+        });
+        if (age >= 0.55) {
+          scene.remove(g);
+          return true;
+        }
+        return false;
+      },
+    });
+  }
+
   // --------------------------------------------------------------------------
   // Floating Damage Numbers FX
   // --------------------------------------------------------------------------
@@ -529,11 +600,21 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
         arenaGroup.add(mesh);
       }
 
+      const wasHidden = mesh.userData.wasActive === false;
       mesh.visible = sc.active;
       if (sc.active) {
         mesh.position.set(sc.x, sc.y + Math.sin(time + sc.x) * 0.18, sc.z);
         mesh.rotation.y += 1.8 * dt;
+        if (wasHidden) {
+          triggerEmpShockwaveFX(sc.x, sc.z, 4.5);
+        }
+        const pulse = 0.45 + Math.sin(time * 2.2) * 0.15;
+        mesh.traverse(child => {
+          const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+          if (mat && 'emissiveIntensity' in mat) mat.emissiveIntensity = pulse;
+        });
       }
+      mesh.userData.wasActive = sc.active;
     }
 
     // 2. Sync Projectiles
@@ -624,6 +705,7 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
     update,
     triggerExplosionFX,
     triggerEmpShockwaveFX,
+    triggerKangriBurstFX,
     triggerDamageNumberFX,
     dispose,
   };

@@ -93,10 +93,17 @@ export const VEHICLE_CONFIGS: Record<VehicleCategory, VehiclePhysicsConfig> = {
 export const ROAD_BOUNDS = {
   MIN_X: -26.0, // Physical hotel building walls & Nishat Bagh gate (West)
   MAX_X: 17.2,  // Promenade deodar railing wall along Dal Lake (East)
-  MIN_Z: -430.0, // Dalgate boundary wall (South)
-  MAX_Z: 411.4,  // Checkpoint barrier wall at Burger Barn (North)
+  MIN_Z: -428.4, // JK Police Dalgate barricade (South)
+  MAX_Z: 411.4,  // JK Police Burger Barn checkpoint barricade (North)
   CHECKPOINT_Z: 413.0,
+  SOUTH_CHECKPOINT_Z: -430.0,
 };
+
+export const PICKUP_RESPAWN_SEC = 60;
+export const MATCH_DURATION_SEC = 600;
+export const MATCH_COUNTDOWN_SEC = 10;
+export const MATCH_CELEBRATION_SEC = 12;
+export const MATCH_INTERMISSION_SEC = 8;
 
 export interface PlayerInputPacket {
   seq: number;
@@ -104,6 +111,7 @@ export interface PlayerInputPacket {
   throttle: number; // 0 to 1
   brake: number; // 0 to 1 (or reverse)
   handbrake: boolean;
+  fire?: boolean;
   vehicleType: VehicleCategory;
   clientTime: number;
 }
@@ -124,6 +132,10 @@ export interface PlayerServerState {
   inPursuit: boolean;
   mode?: GameMode;
   combat?: PlayerCombatState;
+  isNpc?: boolean;
+  inRoom?: boolean;
+  inMatch?: boolean;
+  waitingForRound?: boolean;
 }
 
 export type GameMode = 'free_roam' | 'battle_arena';
@@ -136,7 +148,57 @@ export type WeaponType =
   | 'oil'
   | 'spike'
   | 'machinegun'
-  | 'homing';
+  | 'homing'
+  | 'bat'
+  | 'pipe'
+  | 'pistol'
+  | 'shotgun'
+  | 'rifle'
+  | 'kangri';
+
+export type StreetWeaponType = 'bat' | 'pipe' | 'pistol' | 'shotgun' | 'rifle' | 'kangri';
+
+export const STREET_WEAPON_ORDER: StreetWeaponType[] = [
+  'bat',
+  'pipe',
+  'pistol',
+  'shotgun',
+  'rifle',
+  'kangri',
+];
+
+export const WEAPON_SLOT_ORDER: WeaponType[] = [
+  'machinegun',
+  'rocket',
+  'grenade',
+  'firecracker',
+  'emp',
+  'oil',
+  'spike',
+  'homing',
+];
+
+export const MAX_WORLD_PICKUPS = 6;
+export const WORLD_PICKUP_LIFETIME_SEC = 48;
+export const WORLD_SPAWN_MIN_SEC = 30;
+export const WORLD_SPAWN_MAX_SEC = 60;
+
+export const WORLD_WEAPON_SPAWNS: { x: number; z: number }[] = [
+  { x: 6.2, z: -390 },
+  { x: -5.4, z: -340 },
+  { x: 5.8, z: -280 },
+  { x: -4.8, z: -220 },
+  { x: 6.0, z: -170 },
+  { x: -5.2, z: -90 },
+  { x: 7.2, z: 60 },
+  { x: -4.6, z: 110 },
+  { x: 6.4, z: 180 },
+  { x: -5.0, z: 240 },
+  { x: 5.6, z: 300 },
+  { x: -4.4, z: 360 },
+  { x: 3.2, z: -50 },
+  { x: -3.8, z: 20 },
+];
 
 export interface WeaponDefinition {
   id: WeaponType;
@@ -151,6 +213,8 @@ export interface WeaponDefinition {
   cooldownMs: number;
   ammo: number;
   dropProbability: number; // percentage (sums to 100)
+  kind?: 'melee' | 'hitscan' | 'projectile' | 'special' | 'arena';
+  range?: number;
 }
 
 export const WEAPON_CONFIGS: Record<WeaponType, WeaponDefinition> = {
@@ -265,15 +329,121 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponDefinition> = {
     cooldownMs: 1500,
     ammo: 2,
     dropProbability: 5,
+    kind: 'arena',
+  },
+  bat: {
+    id: 'bat',
+    name: 'Boulevard Wooden Bat',
+    categoryName: 'Melee',
+    description: 'Dark walnut cricket bat. Fast close-range smash from the driver seat.',
+    icon: '🏏',
+    damage: 16,
+    splashDamage: 0,
+    splashRadius: 0,
+    projectileSpeed: 0,
+    cooldownMs: 480,
+    ammo: 28,
+    dropProbability: 22,
+    kind: 'melee',
+    range: 3.4,
+  },
+  pipe: {
+    id: 'pipe',
+    name: 'Scrap Metal Pipe',
+    categoryName: 'Heavy Melee',
+    description: 'Heavy galvanized pipe. Slower swing, harder hit, briefly stuns steering.',
+    icon: '🔧',
+    damage: 24,
+    splashDamage: 0,
+    splashRadius: 0,
+    projectileSpeed: 0,
+    cooldownMs: 720,
+    ammo: 18,
+    dropProbability: 18,
+    kind: 'melee',
+    range: 3.8,
+  },
+  pistol: {
+    id: 'pistol',
+    name: 'Compact Pistol',
+    categoryName: 'Sidearm',
+    description: 'Short-range 9mm bursts from the window.',
+    icon: '🔫',
+    damage: 12,
+    splashDamage: 0,
+    splashRadius: 0,
+    projectileSpeed: 78,
+    cooldownMs: 280,
+    ammo: 14,
+    dropProbability: 18,
+    kind: 'projectile',
+    range: 28,
+  },
+  shotgun: {
+    id: 'shotgun',
+    name: 'Sawed Off Shotgun',
+    categoryName: 'Close Range',
+    description: 'Devastating spread at bumper distance, falloff beyond 12m.',
+    icon: '💥',
+    damage: 28,
+    splashDamage: 8,
+    splashRadius: 2.4,
+    projectileSpeed: 62,
+    cooldownMs: 900,
+    ammo: 7,
+    dropProbability: 14,
+    kind: 'projectile',
+    range: 16,
+  },
+  rifle: {
+    id: 'rifle',
+    name: 'Boulevard Rifle',
+    categoryName: 'Long Range',
+    description: 'Accurate rifle fire down the lakeside lanes.',
+    icon: '🎯',
+    damage: 18,
+    splashDamage: 0,
+    splashRadius: 0,
+    projectileSpeed: 110,
+    cooldownMs: 220,
+    ammo: 22,
+    dropProbability: 14,
+    kind: 'projectile',
+    range: 55,
+  },
+  kangri: {
+    id: 'kangri',
+    name: 'Kashmiri Kangri',
+    categoryName: 'Fire Pot',
+    description: 'Traditional wicker-and-clay kangri. Hurls a cone of embers that scorches vehicles.',
+    icon: '🔥',
+    damage: 22,
+    splashDamage: 10,
+    splashRadius: 3.2,
+    projectileSpeed: 18,
+    cooldownMs: 1100,
+    ammo: 8,
+    dropProbability: 14,
+    kind: 'special',
+    range: 5.2,
   },
 };
+
+export interface WorldWeaponPickup {
+  id: string;
+  weapon: StreetWeaponType;
+  x: number;
+  y: number;
+  z: number;
+  expiresAt: number;
+}
 
 // Battle Arena Spatial Bounds (Dedicated Dal Lake Mayhem Arena Zone)
 export const ARENA_BOUNDS = {
   MIN_X: -32.0, // Western pavilion and spectator grandstand wall
   MAX_X: 20.0,  // Eastern Dal Lake illuminated battle perimeter
-  MIN_Z: -430.0, // Southern Dalgate boundary wall (fully open past Wazwan Darbar Hotel)
-  MAX_Z: 411.4,  // Northern Checkpoint barrier wall at Burger Barn
+  MIN_Z: -428.4, // Southern JK Police Dalgate barricade (road stays open past Wazwan Darbar Hotel)
+  MAX_Z: 411.4,  // Northern JK Police Burger Barn checkpoint
 };
 
 export const ARENA_SPAWNS = [
@@ -339,7 +509,9 @@ export interface PlayerCombatState {
   shield: number; // 0 - 50 bonus absorption
   weapon: WeaponType | null;
   ammo: number;
+  inventory: Partial<Record<WeaponType, number>>;
   kills: number;
+  deaths: number;
   damageDealt: number;
   isAlive: boolean;
   invulnerableUntil: number; // epoch ms
@@ -366,13 +538,50 @@ export interface DamageEvent {
   timestamp: number;
 }
 
+export type MatchPhase =
+  | 'waiting'
+  | 'countdown'
+  | 'active'
+  | 'finished'
+  | 'celebration'
+  | 'intermission';
+
+export interface MatchLeaderboardEntry {
+  playerId: string;
+  name: string;
+  kills: number;
+  deaths: number;
+  kdRatio: number;
+  kdDisplay: string;
+  damageDealt: number;
+  rank: number;
+  isNpc: boolean;
+  isAlive: boolean;
+  rewardCash?: number;
+  rewardXp?: number;
+}
+
+export interface PresenceMetrics {
+  online: number;
+  inRoom: number;
+  inMatch: number;
+  waiting: number;
+  bots: number;
+  connected: boolean;
+}
+
 export interface ArenaMatchState {
-  state: 'waiting' | 'countdown' | 'active' | 'finished';
+  state: MatchPhase;
   timerSec: number;
   totalPlayers: number;
   playersAlive: number;
   winnerId?: string;
   winnerName?: string;
+  sharedVictory?: boolean;
+  announcement?: string;
+  matchId?: string;
+  leaderboard?: MatchLeaderboardEntry[];
+  presence?: PresenceMetrics;
 }
 
 export interface ChatMessage {

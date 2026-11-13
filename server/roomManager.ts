@@ -13,13 +13,32 @@ import {
   GameMode,
   WeaponType,
   WEAPON_CONFIGS,
+  WEAPON_SLOT_ORDER,
   ArenaCrateState,
   ArenaProjectileState,
   ArenaHazardState,
   ArenaMatchState,
   DamageEvent,
+  MatchLeaderboardEntry,
+  PresenceMetrics,
+  PICKUP_RESPAWN_SEC,
+  MATCH_DURATION_SEC,
+  MATCH_COUNTDOWN_SEC,
+  MATCH_CELEBRATION_SEC,
+  MATCH_INTERMISSION_SEC,
+  STREET_WEAPON_ORDER,
+  StreetWeaponType,
+  WorldWeaponPickup,
+  WORLD_WEAPON_SPAWNS,
+  MAX_WORLD_PICKUPS,
+  WORLD_PICKUP_LIFETIME_SEC,
+  WORLD_SPAWN_MIN_SEC,
+  WORLD_SPAWN_MAX_SEC,
 } from '../src/shared/types.ts';
 import { storage } from './storage.ts';
+
+const HEARTBEAT_TIMEOUT_MS = 12000;
+const STALE_SESSION_MS = 25000;
 
 interface ConnectedClient {
   ws: WebSocket;
@@ -28,10 +47,16 @@ interface ConnectedClient {
   vehicle: VehicleCategory;
   mode: GameMode;
   lastInputTime: number;
+  lastHeartbeat: number;
   inputQueue: PlayerInputPacket[];
   state: PlayerServerState;
   combat: PlayerCombatState;
   lastFireTime: number;
+  lastFireByWeapon: Partial<Record<WeaponType, number>>;
+  inRoom: boolean;
+  inMatch: boolean;
+  waitingForRound: boolean;
+  wantsFire: boolean;
 }
 
 export class RoomManager {
@@ -49,17 +74,54 @@ export class RoomManager {
   private hazards: Map<string, ArenaHazardState> = new Map();
   private matchState: ArenaMatchState = {
     state: 'waiting',
-    timerSec: 180,
+    timerSec: MATCH_COUNTDOWN_SEC,
     totalPlayers: 0,
     playersAlive: 0,
+    announcement: 'WAITING FOR PLAYERS',
+    matchId: '',
+    leaderboard: [],
+    presence: { online: 0, inRoom: 0, inMatch: 0, waiting: 0, bots: 0, connected: true },
   };
   private matchId: string = `match_${Date.now()}`;
   private matchCountdownTimer: number = 0;
+  private matchClockSec: number = MATCH_DURATION_SEC;
+  private phaseTimerSec: number = 0;
+  private rewardedMatchId: string | null = null;
+  private pickupLocks: Set<string> = new Set();
+  private worldPickups: WorldWeaponPickup[] = [];
+  private nextWorldSpawnSec = 4;
+  private worldPickupSeq = 1;
+  private lastMinuteAnnounced = false;
+  private lastAliveAnnounced = -1;
 
   constructor() {
     this.initRoadBots();
-    this.initArenaCrates();
+    this.initArenaCrates(true);
     this.initArenaBots();
+    this.seedWorldPickups();
+  }
+
+  private createCombatState(partial?: Partial<PlayerCombatState>): PlayerCombatState {
+    return {
+      health: 100,
+      maxHealth: 100,
+      shield: 0,
+      weapon: null,
+      ammo: 0,
+      inventory: {},
+      kills: 0,
+      deaths: 0,
+      damageDealt: 0,
+      isAlive: true,
+      invulnerableUntil: Date.now() + 3500,
+      empUntil: 0,
+      oilUntil: 0,
+      speedPenaltyUntil: 0,
+      boostUntil: 0,
+      boostCooldownUntil: 0,
+      dodgeCooldownUntil: 0,
+      ...partial,
+    };
   }
 
   private initRoadBots() {
@@ -86,18 +148,21 @@ export class RoomManager {
         wantedLevel: 0,
         inPursuit: false,
         mode: 'free_roam',
+        isNpc: true,
+        combat: this.createCombatState({ shield: 0 }),
       });
     }
   }
 
-  private initArenaCrates() {
-    this.crates = CRATE_SPAWN_LOCATIONS.map((loc, idx) => ({
+  private initArenaCrates(allActive = true) {
+    this.pickupLocks.clear();
+    this.crates = CRATE_SPAWN_LOCATIONS.map(loc => ({
       id: loc.id,
       x: loc.x,
       y: 0.9,
       z: loc.z,
-      active: idx < 4, // 4 initially active
-      respawnTimer: idx < 4 ? 0 : 4 + Math.random() * 6,
+      active: allActive,
+      respawnTimer: 0,
     }));
   }
 
@@ -124,25 +189,18 @@ export class RoomManager {
         wantedLevel: 0,
         inPursuit: false,
         mode: 'battle_arena',
+        isNpc: true,
+        inRoom: false,
+        inMatch: false,
+        waitingForRound: false,
       };
 
-      const combatState: PlayerCombatState = {
-        health: 100,
-        maxHealth: 100,
+      const combatState: PlayerCombatState = this.createCombatState({
         shield: 25,
         weapon: 'machinegun',
         ammo: 15,
-        kills: 0,
-        damageDealt: 0,
-        isAlive: true,
-        invulnerableUntil: Date.now() + 3500,
-        empUntil: 0,
-        oilUntil: 0,
-        speedPenaltyUntil: 0,
-        boostUntil: 0,
-        boostCooldownUntil: 0,
-        dodgeCooldownUntil: 0,
-      };
+        inventory: { machinegun: 15 },
+      });
 
       botState.combat = combatState;
       this.arenaBots.set(b.id, {
@@ -165,20 +223,25 @@ export class RoomManager {
           const msg = JSON.parse(data.toString());
           switch (msg.type) {
             case 'JOIN': {
-              const { playerId, name, vehicle, mode } = msg;
+              const { playerId, name, vehicle, mode, enterRoom } = msg;
+              if (!playerId || typeof playerId !== 'string') return;
               clientSessionId = playerId;
               const vCategory: VehicleCategory = vehicle || 'auto';
               const selectedMode: GameMode = mode === 'battle_arena' ? 'battle_arena' : 'free_roam';
-
               const profile = storage.getOrCreateProfile(playerId, name);
 
-              // Spawn position depending on mode
+              const existing = this.clients.get(playerId);
+              const matchIsLive =
+                this.matchState.state === 'active' ||
+                this.matchState.state === 'countdown' ||
+                this.matchState.state === 'finished' ||
+                this.matchState.state === 'celebration';
+
               let spawnX = 0;
               let spawnZ = -400;
               let spawnHeading = 0;
-
               if (selectedMode === 'battle_arena') {
-                const sp = ARENA_SPAWNS[this.clients.size % ARENA_SPAWNS.length];
+                const sp = ARENA_SPAWNS[this.realOnlineCount() % ARENA_SPAWNS.length];
                 spawnX = sp.x;
                 spawnZ = sp.z;
                 spawnHeading = sp.heading;
@@ -187,23 +250,15 @@ export class RoomManager {
                 spawnX = Math.random() > 0.5 ? -3.5 : 3.5;
               }
 
-              const combat: PlayerCombatState = {
-                health: 100,
-                maxHealth: 100,
-                shield: 0,
-                weapon: null,
-                ammo: 0,
-                kills: 0,
-                damageDealt: 0,
-                isAlive: true,
-                invulnerableUntil: Date.now() + 3500,
-                empUntil: 0,
-                oilUntil: 0,
-                speedPenaltyUntil: 0,
-                boostUntil: 0,
-                boostCooldownUntil: 0,
-                dodgeCooldownUntil: 0,
-              };
+              const wantsRoom = selectedMode === 'battle_arena' && enterRoom !== false;
+              const resumeMatch = !!(existing && existing.inMatch && matchIsLive);
+              const waiting = wantsRoom && matchIsLive && !resumeMatch;
+
+              const combat = existing?.combat || this.createCombatState({
+                shield: selectedMode === 'battle_arena' ? 25 : 0,
+              });
+              if (!combat.inventory) combat.inventory = {};
+              if (typeof combat.deaths !== 'number') combat.deaths = 0;
 
               const client: ConnectedClient = {
                 ws,
@@ -212,10 +267,16 @@ export class RoomManager {
                 vehicle: vCategory,
                 mode: selectedMode,
                 lastInputTime: Date.now(),
+                lastHeartbeat: Date.now(),
                 inputQueue: [],
-                lastFireTime: 0,
+                lastFireTime: existing?.lastFireTime || 0,
+                lastFireByWeapon: existing?.lastFireByWeapon || {},
                 combat,
-                state: {
+                wantsFire: false,
+                inRoom: wantsRoom || existing?.inRoom || false,
+                inMatch: resumeMatch,
+                waitingForRound: waiting,
+                state: existing?.state || {
                   id: playerId,
                   name: profile.name,
                   vehicle: vCategory,
@@ -230,12 +291,34 @@ export class RoomManager {
                   inPursuit: false,
                   mode: selectedMode,
                   combat,
+                  isNpc: false,
+                  inRoom: wantsRoom,
+                  inMatch: resumeMatch,
+                  waitingForRound: waiting,
                 },
               };
 
-              this.clients.set(playerId, client);
+              client.state.name = profile.name;
+              client.state.vehicle = vCategory;
+              client.state.mode = selectedMode;
+              client.state.combat = combat;
+              client.state.isNpc = false;
+              client.state.inRoom = client.inRoom;
+              client.state.inMatch = client.inMatch;
+              client.state.waitingForRound = client.waitingForRound;
 
-              // Send Welcome Handshake
+              if (existing && existing.ws !== ws && existing.ws.readyState === WebSocket.OPEN) {
+                try {
+                  existing.ws.send(JSON.stringify({ type: 'SESSION_REPLACED' }));
+                  existing.ws.close();
+                } catch {
+                  /* ignore */
+                }
+              }
+
+              this.clients.set(playerId, client);
+              this.updateArenaPlayerCounts();
+
               ws.send(JSON.stringify({
                 type: 'WELCOME',
                 playerId,
@@ -243,18 +326,63 @@ export class RoomManager {
                 mode: selectedMode,
                 players: this.getAllEntities(),
                 crates: this.crates,
-                matchState: this.matchState,
+                worldPickups: this.worldPickups,
+                matchState: this.getPublicMatchState(),
+                presence: this.buildPresence(),
                 chat: this.chatHistory.slice(-15),
               }));
 
               this.broadcast({
                 type: 'PLAYER_JOINED',
                 player: client.state,
+                presence: this.buildPresence(),
               }, playerId);
 
-              if (selectedMode === 'battle_arena') {
+              if (client.inRoom) {
                 this.checkStartArenaMatch();
               }
+              break;
+            }
+
+            case 'ENTER_ROOM': {
+              if (!clientSessionId) return;
+              const client = this.clients.get(clientSessionId);
+              if (!client) return;
+              this.enterRoom(client);
+              break;
+            }
+
+            case 'LEAVE_ROOM': {
+              if (!clientSessionId) return;
+              const client = this.clients.get(clientSessionId);
+              if (!client) return;
+              client.inRoom = false;
+              client.inMatch = false;
+              client.waitingForRound = false;
+              client.mode = 'free_roam';
+              client.state.mode = 'free_roam';
+              client.state.inRoom = false;
+              client.state.inMatch = false;
+              client.state.waitingForRound = false;
+              this.updateArenaPlayerCounts();
+              this.broadcast({ type: 'PRESENCE_UPDATE', presence: this.buildPresence(), matchState: this.getPublicMatchState() });
+              break;
+            }
+
+            case 'SELECT_WEAPON': {
+              if (!clientSessionId) return;
+              const client = this.clients.get(clientSessionId);
+              if (!client || !client.combat.isAlive) return;
+              const slot = Number(msg.slot);
+              const list = client.mode === 'battle_arena' ? WEAPON_SLOT_ORDER : STREET_WEAPON_ORDER;
+              const wType: WeaponType | undefined =
+                list[slot - 1] || (WEAPON_CONFIGS[msg.weapon as WeaponType] ? msg.weapon : undefined);
+              if (!wType) return;
+              const ammo = client.combat.inventory[wType] || 0;
+              if (ammo <= 0) return;
+              client.combat.weapon = wType;
+              client.combat.ammo = ammo;
+              client.state.combat = client.combat;
               break;
             }
 
@@ -262,9 +390,15 @@ export class RoomManager {
               if (!clientSessionId) return;
               const client = this.clients.get(clientSessionId);
               if (!client) return;
+              client.lastHeartbeat = Date.now();
+              client.lastInputTime = Date.now();
               const input: PlayerInputPacket = msg.input;
               if (input && typeof input.seq === 'number') {
+                client.wantsFire = !!input.fire;
                 client.inputQueue.push(input);
+                if (client.inputQueue.length > 16) {
+                  client.inputQueue.splice(0, client.inputQueue.length - 16);
+                }
               }
               break;
             }
@@ -278,18 +412,19 @@ export class RoomManager {
               client.state.mode = targetMode;
 
               if (targetMode === 'battle_arena') {
-                const sp = ARENA_SPAWNS[Math.floor(Math.random() * ARENA_SPAWNS.length)];
-                client.state.x = sp.x;
-                client.state.z = sp.z;
-                client.state.heading = sp.heading;
-                client.state.speed = 0;
-                this.resetPlayerCombat(client);
-                this.checkStartArenaMatch();
+                this.enterRoom(client);
               } else {
+                client.inRoom = false;
+                client.inMatch = false;
+                client.waitingForRound = false;
+                client.state.inRoom = false;
+                client.state.inMatch = false;
+                client.state.waitingForRound = false;
                 client.state.x = Math.random() > 0.5 ? -3.5 : 3.5;
                 client.state.z = -380;
                 client.state.heading = 0;
                 client.state.speed = 0;
+                this.updateArenaPlayerCounts();
               }
 
               this.broadcast({
@@ -302,23 +437,15 @@ export class RoomManager {
             case 'FIRE_WEAPON': {
               if (!clientSessionId) return;
               const client = this.clients.get(clientSessionId);
-              if (!client || client.mode !== 'battle_arena' || !client.combat.isAlive) return;
+              this.tryFireWeapon(client);
+              break;
+            }
 
-              const now = Date.now();
-              const wType = client.combat.weapon;
-              if (!wType || client.combat.ammo <= 0) return;
-
-              const wCfg = WEAPON_CONFIGS[wType];
-              if (!wCfg) return;
-
-              if (now - client.lastFireTime < wCfg.cooldownMs) return;
-              client.lastFireTime = now;
-              client.combat.ammo -= 1;
-              if (client.combat.ammo <= 0) {
-                client.combat.weapon = null;
-              }
-
-              this.handleWeaponFire(client, wType);
+            case 'PICKUP_WEAPON': {
+              if (!clientSessionId) return;
+              const client = this.clients.get(clientSessionId);
+              if (!client) return;
+              this.tryCollectWorldPickup(client, msg.pickupId);
               break;
             }
 
@@ -369,7 +496,8 @@ export class RoomManager {
             }
 
             case 'RESTART_ARENA_MATCH': {
-              this.startArenaMatchCountdown();
+              // Automatic lifecycle owns restarts; ignore client restart requests
+              // so a single player cannot reset an in-progress round.
               break;
             }
 
@@ -415,7 +543,11 @@ export class RoomManager {
             }
 
             case 'PING': {
-              ws.send(JSON.stringify({ type: 'PONG', time: msg.time }));
+              if (clientSessionId) {
+                const client = this.clients.get(clientSessionId);
+                if (client) client.lastHeartbeat = Date.now();
+              }
+              ws.send(JSON.stringify({ type: 'PONG', time: msg.time, presence: this.buildPresence() }));
               break;
             }
           }
@@ -426,12 +558,16 @@ export class RoomManager {
 
       ws.on('close', () => {
         if (clientSessionId) {
-          this.clients.delete(clientSessionId);
-          this.broadcast({
-            type: 'PLAYER_LEFT',
-            playerId: clientSessionId,
-          });
-          this.updateArenaPlayerCounts();
+          const current = this.clients.get(clientSessionId);
+          if (current && current.ws === ws) {
+            this.clients.delete(clientSessionId);
+            this.broadcast({
+              type: 'PLAYER_LEFT',
+              playerId: clientSessionId,
+              presence: this.buildPresence(),
+            });
+            this.updateArenaPlayerCounts();
+          }
         }
       });
     });
@@ -444,55 +580,247 @@ export class RoomManager {
 
     // 20 Hz State Broadcast Loop
     this.broadcastInterval = setInterval(() => {
+      this.dropStaleSessions();
       this.broadcastStateSnapshot();
     }, 1000 / 20);
   }
 
-  private resetPlayerCombat(client: ConnectedClient) {
+  private enterRoom(client: ConnectedClient) {
+    client.mode = 'battle_arena';
+    client.state.mode = 'battle_arena';
+    client.inRoom = true;
+    client.state.inRoom = true;
+
+    const live =
+      this.matchState.state === 'active' ||
+      this.matchState.state === 'countdown' ||
+      this.matchState.state === 'finished' ||
+      this.matchState.state === 'celebration';
+
+    if (live && !client.inMatch) {
+      client.waitingForRound = true;
+      client.inMatch = false;
+      client.state.waitingForRound = true;
+      client.state.inMatch = false;
+      const sp = ARENA_SPAWNS[this.realOnlineCount() % ARENA_SPAWNS.length];
+      client.state.x = sp.x;
+      client.state.z = sp.z;
+      client.state.heading = sp.heading;
+      client.state.speed = 0;
+    } else if (!live) {
+      client.waitingForRound = false;
+      client.state.waitingForRound = false;
+      this.checkStartArenaMatch();
+    }
+
+    this.updateArenaPlayerCounts();
+    if (client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(JSON.stringify({
+        type: 'ROOM_JOINED',
+        matchState: this.getPublicMatchState(),
+        presence: this.buildPresence(),
+        waitingForRound: client.waitingForRound,
+      }));
+    }
+    this.broadcast({ type: 'PRESENCE_UPDATE', presence: this.buildPresence(), matchState: this.getPublicMatchState() });
+  }
+
+  private realOnlineCount() {
+    return this.clients.size;
+  }
+
+  private roomClients() {
+    return Array.from(this.clients.values()).filter(c => c.inRoom);
+  }
+
+  private matchClients() {
+    return Array.from(this.clients.values()).filter(c => c.inMatch);
+  }
+
+  private buildPresence(): PresenceMetrics {
+    const inRoom = this.roomClients().length;
+    const inMatch = this.matchClients().length;
+    const waiting = Array.from(this.clients.values()).filter(c => c.inRoom && !c.inMatch).length;
+    return {
+      online: this.clients.size,
+      inRoom,
+      inMatch,
+      waiting,
+      bots: this.bots.size + this.arenaBots.size,
+      connected: true,
+    };
+  }
+
+  private getPublicMatchState(): ArenaMatchState {
+    return {
+      ...this.matchState,
+      presence: this.buildPresence(),
+      matchId: this.matchId,
+      leaderboard: this.buildLeaderboard(false),
+    };
+  }
+
+  private kdRatio(kills: number, deaths: number) {
+    if (kills > 0 && deaths === 0) return Number.POSITIVE_INFINITY;
+    if (kills === 0 && deaths === 0) return 0;
+    return kills / Math.max(1, deaths);
+  }
+
+  private kdDisplay(kills: number, deaths: number) {
+    if (kills > 0 && deaths === 0) return '∞';
+    if (kills === 0 && deaths === 0) return '0.00';
+    return (kills / Math.max(1, deaths)).toFixed(2);
+  }
+
+  private buildLeaderboard(humansOnly: boolean): MatchLeaderboardEntry[] {
+    const rows: MatchLeaderboardEntry[] = [];
+    for (const c of this.clients.values()) {
+      if (!c.inMatch && this.matchState.state !== 'waiting') {
+        if (!c.inRoom) continue;
+      }
+      if (humansOnly || true) {
+        if (c.inMatch || this.matchState.state === 'waiting' || this.matchState.state === 'countdown' || this.matchState.state === 'intermission') {
+          if (!c.inRoom && !c.inMatch) continue;
+          rows.push({
+            playerId: c.playerId,
+            name: c.name,
+            kills: c.combat.kills,
+            deaths: c.combat.deaths,
+            kdRatio: this.kdRatio(c.combat.kills, c.combat.deaths),
+            kdDisplay: this.kdDisplay(c.combat.kills, c.combat.deaths),
+            damageDealt: c.combat.damageDealt,
+            rank: 0,
+            isNpc: false,
+            isAlive: c.combat.isAlive,
+          });
+        }
+      }
+    }
+    rows.sort((a, b) => {
+      const aInf = a.kdRatio === Number.POSITIVE_INFINITY;
+      const bInf = b.kdRatio === Number.POSITIVE_INFINITY;
+      if (aInf && !bInf) return -1;
+      if (bInf && !aInf) return 1;
+      if (b.kdRatio !== a.kdRatio) return b.kdRatio - a.kdRatio;
+      if (b.kills !== a.kills) return b.kills - a.kills;
+      if (a.deaths !== b.deaths) return a.deaths - b.deaths;
+      if (b.damageDealt !== a.damageDealt) return b.damageDealt - a.damageDealt;
+      return a.name.localeCompare(b.name);
+    });
+    rows.forEach((r, i) => {
+      r.rank = i + 1;
+    });
+    return rows;
+  }
+
+  private tryFireWeapon(client: ConnectedClient | undefined) {
+    if (!client || !client.combat.isAlive) return;
+    if (client.mode === 'battle_arena') {
+      if (!client.inMatch || this.matchState.state !== 'active') return;
+    }
+
+    const wType = client.combat.weapon;
+    if (!wType) return;
+    const ammo = client.combat.inventory[wType] || 0;
+    if (ammo <= 0) {
+      client.combat.weapon = null;
+      client.combat.ammo = 0;
+      return;
+    }
+
+    const wCfg = WEAPON_CONFIGS[wType];
+    if (!wCfg) return;
+    const now = Date.now();
+    const last = client.lastFireByWeapon[wType] || 0;
+    if (now - last < wCfg.cooldownMs) return;
+
+    client.lastFireByWeapon[wType] = now;
+    client.lastFireTime = now;
+    const remaining = ammo - 1;
+    client.combat.inventory[wType] = remaining;
+    client.combat.ammo = remaining;
+    if (remaining <= 0) {
+      const next =
+        STREET_WEAPON_ORDER.find(w => (client.combat.inventory[w] || 0) > 0) ||
+        WEAPON_SLOT_ORDER.find(w => (client.combat.inventory[w] || 0) > 0) ||
+        null;
+      client.combat.weapon = next;
+      client.combat.ammo = next ? client.combat.inventory[next] || 0 : 0;
+    }
+    client.state.combat = client.combat;
+    this.handleWeaponFire(client, wType);
+  }
+
+  private dropStaleSessions() {
+    const now = Date.now();
+    for (const [id, client] of this.clients.entries()) {
+      const deadSocket = client.ws.readyState !== WebSocket.OPEN && client.ws.readyState !== WebSocket.CONNECTING;
+      const stale = now - client.lastHeartbeat > HEARTBEAT_TIMEOUT_MS && now - client.lastInputTime > STALE_SESSION_MS;
+      if (deadSocket || stale) {
+        this.clients.delete(id);
+        this.broadcast({
+          type: 'PLAYER_LEFT',
+          playerId: id,
+          presence: this.buildPresence(),
+        });
+      }
+    }
+  }
+
+  private resetPlayerCombat(client: ConnectedClient, resetStats: boolean) {
     client.combat.health = 100;
     client.combat.maxHealth = 100;
     client.combat.shield = 25;
     client.combat.weapon = null;
     client.combat.ammo = 0;
+    client.combat.inventory = {};
     client.combat.isAlive = true;
     client.combat.invulnerableUntil = Date.now() + 3500;
     client.combat.empUntil = 0;
     client.combat.oilUntil = 0;
     client.combat.speedPenaltyUntil = 0;
     client.combat.boostUntil = 0;
+    client.combat.boostCooldownUntil = 0;
+    client.combat.dodgeCooldownUntil = 0;
+    if (resetStats) {
+      client.combat.kills = 0;
+      client.combat.deaths = 0;
+      client.combat.damageDealt = 0;
+    }
+    client.lastFireByWeapon = {};
     client.state.combat = client.combat;
   }
 
   private checkStartArenaMatch() {
-    const arenaPlayers = Array.from(this.clients.values()).filter(c => c.mode === 'battle_arena');
-    if (arenaPlayers.length >= 1 && this.matchState.state === 'waiting') {
+    const ready = this.roomClients();
+    if (ready.length >= 1 && this.matchState.state === 'waiting') {
       this.startArenaMatchCountdown();
     }
   }
 
-  private startArenaMatchCountdown() {
-    this.matchState.state = 'countdown';
-    this.matchCountdownTimer = 10;
-    this.matchId = `match_${Date.now()}`;
-    this.projectiles.clear();
-    this.hazards.clear();
-    this.initArenaCrates();
-
-    // Reset human players in arena
+  private lockMatchParticipants() {
     let spIdx = 0;
     for (const c of this.clients.values()) {
-      if (c.mode === 'battle_arena') {
-        const sp = ARENA_SPAWNS[spIdx % ARENA_SPAWNS.length];
-        spIdx++;
-        c.state.x = sp.x;
-        c.state.z = sp.z;
-        c.state.heading = sp.heading;
-        c.state.speed = 0;
-        this.resetPlayerCombat(c);
+      if (!c.inRoom) {
+        c.inMatch = false;
+        c.waitingForRound = false;
+        c.state.inMatch = false;
+        c.state.waitingForRound = false;
+        continue;
       }
+      c.inMatch = true;
+      c.waitingForRound = false;
+      c.state.inMatch = true;
+      c.state.waitingForRound = false;
+      const sp = ARENA_SPAWNS[spIdx % ARENA_SPAWNS.length];
+      spIdx++;
+      c.state.x = sp.x;
+      c.state.z = sp.z;
+      c.state.heading = sp.heading;
+      c.state.speed = 0;
+      this.resetPlayerCombat(c, true);
     }
 
-    // Reset arena bots
     for (const b of this.arenaBots.values()) {
       const sp = ARENA_SPAWNS[spIdx % ARENA_SPAWNS.length];
       spIdx++;
@@ -505,29 +833,346 @@ export class RoomManager {
       b.combat.shield = 25;
       b.combat.weapon = 'machinegun';
       b.combat.ammo = 18;
+      b.combat.inventory = { machinegun: 18 };
+      b.combat.kills = 0;
+      b.combat.deaths = 0;
+      b.combat.damageDealt = 0;
       b.combat.isAlive = true;
       b.combat.invulnerableUntil = Date.now() + 3500;
       b.combat.empUntil = 0;
       b.combat.oilUntil = 0;
       b.state.combat = b.combat;
     }
+  }
 
+  private startArenaMatchCountdown() {
+    this.matchState.state = 'countdown';
+    this.matchCountdownTimer = MATCH_COUNTDOWN_SEC;
+    this.phaseTimerSec = MATCH_COUNTDOWN_SEC;
+    this.matchId = `match_${Date.now()}`;
+    this.rewardedMatchId = null;
+    this.matchState.matchId = this.matchId;
+    this.matchState.announcement = `MATCH STARTING IN ${MATCH_COUNTDOWN_SEC}...`;
+    this.matchState.winnerId = undefined;
+    this.matchState.winnerName = undefined;
+    this.matchState.sharedVictory = false;
+    this.lastMinuteAnnounced = false;
+    this.lastAliveAnnounced = -1;
+    this.projectiles.clear();
+    this.hazards.clear();
+    this.initArenaCrates(true);
+    this.lockMatchParticipants();
     this.updateArenaPlayerCounts();
 
     this.broadcast({
       type: 'MATCH_STATE_CHANGE',
-      matchState: this.matchState,
+      matchState: this.getPublicMatchState(),
+      presence: this.buildPresence(),
+      announcement: this.matchState.announcement,
+    });
+  }
+
+  private beginActiveMatch() {
+    this.matchState.state = 'active';
+    this.matchClockSec = MATCH_DURATION_SEC;
+    this.matchState.timerSec = MATCH_DURATION_SEC;
+    this.matchState.announcement = 'MATCH STARTED!';
+    this.updateArenaPlayerCounts();
+    this.broadcast({
+      type: 'MATCH_STARTED',
+      matchState: this.getPublicMatchState(),
+      presence: this.buildPresence(),
+      announcement: 'MATCH STARTED!',
+    });
+  }
+
+  private finishMatch() {
+    this.matchState.state = 'finished';
+    this.projectiles.clear();
+    const board = this.buildLeaderboard(true).filter(r => !r.isNpc && this.clients.get(r.playerId)?.inMatch);
+    this.matchState.leaderboard = board;
+
+    let winners = board.filter(r => r.rank === 1);
+    if (board.length >= 2) {
+      const top = board[0];
+      winners = board.filter(r =>
+        r.kdRatio === top.kdRatio &&
+        r.kills === top.kills &&
+        r.deaths === top.deaths &&
+        r.damageDealt === top.damageDealt
+      );
+    }
+
+    this.matchState.sharedVictory = winners.length > 1;
+    this.matchState.winnerId = winners[0]?.playerId;
+    this.matchState.winnerName = winners.length
+      ? winners.map(w => w.name).join(' & ')
+      : 'No Contest';
+    this.matchState.announcement = winners.length ? 'WE HAVE A WINNER!' : 'MATCH FINISHED';
+
+    this.grantMatchRewards(board);
+    this.broadcast({
+      type: 'MATCH_FINISHED',
+      matchState: this.getPublicMatchState(),
+      presence: this.buildPresence(),
+      announcement: this.matchState.announcement,
+    });
+
+    this.matchState.state = 'celebration';
+    this.phaseTimerSec = MATCH_CELEBRATION_SEC;
+    this.matchState.timerSec = MATCH_CELEBRATION_SEC;
+    this.broadcast({
+      type: 'WINNER_CELEBRATION',
+      matchState: this.getPublicMatchState(),
+      presence: this.buildPresence(),
+    });
+  }
+
+  private grantMatchRewards(board: MatchLeaderboardEntry[]) {
+    if (this.rewardedMatchId === this.matchId) return;
+    this.rewardedMatchId = this.matchId;
+    const now = Date.now();
+    for (const row of board) {
+      const c = this.clients.get(row.playerId);
+      if (!c) continue;
+      const isWin = row.rank === 1;
+      const topThree = row.rank <= 3;
+      const rewardCash = 400 + row.kills * 250 + (isWin ? 5000 : topThree ? 2000 : 0);
+      const rewardXp = 80 + row.kills * 40 + (isWin ? 600 : topThree ? 250 : 0);
+      row.rewardCash = rewardCash;
+      row.rewardXp = rewardXp;
+      storage.recordBattleRewards(
+        c.playerId,
+        this.matchId,
+        `auto_${this.matchId}_${c.playerId}`,
+        row.kills,
+        row.damageDealt,
+        row.rank,
+        rewardCash,
+        rewardXp,
+        isWin
+      );
+    }
+    void now;
+  }
+
+  private startIntermission() {
+    this.matchState.state = 'intermission';
+    this.phaseTimerSec = MATCH_INTERMISSION_SEC;
+    this.matchState.timerSec = MATCH_INTERMISSION_SEC;
+    this.matchState.announcement = 'NEXT MATCH STARTING SOON';
+    this.broadcast({
+      type: 'MATCH_INTERMISSION',
+      matchState: this.getPublicMatchState(),
+      presence: this.buildPresence(),
     });
   }
 
   private updateArenaPlayerCounts() {
-    const humanAlive = Array.from(this.clients.values()).filter(c => c.mode === 'battle_arena' && c.combat.isAlive).length;
-    const botAlive = Array.from(this.arenaBots.values()).filter(b => b.combat.isAlive).length;
-    const humanTotal = Array.from(this.clients.values()).filter(c => c.mode === 'battle_arena').length;
-    const botTotal = this.arenaBots.size;
+    const humans = this.matchClients();
+    const humanAlive = humans.filter(c => c.combat.isAlive).length;
+    this.matchState.totalPlayers = humans.length;
+    this.matchState.playersAlive = humanAlive;
+    this.matchState.presence = this.buildPresence();
+    this.matchState.leaderboard = this.buildLeaderboard(true);
 
-    this.matchState.totalPlayers = humanTotal + botTotal;
-    this.matchState.playersAlive = humanAlive + botAlive;
+    if (
+      this.matchState.state === 'active' &&
+      humanAlive !== this.lastAliveAnnounced &&
+      this.lastAliveAnnounced !== -1 &&
+      humanAlive >= 0
+    ) {
+      this.matchState.announcement = `${humanAlive} PLAYERS REMAINING`;
+    }
+    this.lastAliveAnnounced = humanAlive;
+  }
+
+  private seedWorldPickups() {
+    this.worldPickups = [];
+    for (let i = 0; i < 3; i++) this.spawnWorldPickup();
+    this.nextWorldSpawnSec = WORLD_SPAWN_MIN_SEC + Math.random() * (WORLD_SPAWN_MAX_SEC - WORLD_SPAWN_MIN_SEC);
+  }
+
+  private randomStreetWeapon(): StreetWeaponType {
+    const weights = STREET_WEAPON_ORDER.map(id => WEAPON_CONFIGS[id].dropProbability);
+    const total = weights.reduce((a, b) => a + b, 0);
+    let roll = Math.random() * total;
+    for (let i = 0; i < STREET_WEAPON_ORDER.length; i++) {
+      roll -= weights[i];
+      if (roll <= 0) return STREET_WEAPON_ORDER[i];
+    }
+    return 'bat';
+  }
+
+  private spawnWorldPickup(): WorldWeaponPickup | null {
+    if (this.worldPickups.length >= MAX_WORLD_PICKUPS) return null;
+    const used = new Set(this.worldPickups.map(p => `${p.x}:${p.z}`));
+    const spots = WORLD_WEAPON_SPAWNS.filter(s => !used.has(`${s.x}:${s.z}`));
+    if (!spots.length) return null;
+    const spot = spots[Math.floor(Math.random() * spots.length)];
+    const tooClose =
+      Array.from(this.clients.values()).some(c => {
+        const dx = c.state.x - spot.x;
+        const dz = c.state.z - spot.z;
+        return dx * dx + dz * dz < 16;
+      }) ||
+      Array.from(this.bots.values()).some(b => {
+        const dx = b.x - spot.x;
+        const dz = b.z - spot.z;
+        return dx * dx + dz * dz < 16;
+      });
+    if (tooClose) return null;
+    const pickup: WorldWeaponPickup = {
+      id: `wp_${this.worldPickupSeq++}`,
+      weapon: this.randomStreetWeapon(),
+      x: spot.x,
+      y: 0.2,
+      z: spot.z,
+      expiresAt: Date.now() + WORLD_PICKUP_LIFETIME_SEC * 1000,
+    };
+    this.worldPickups.push(pickup);
+    this.broadcast({ type: 'WORLD_WEAPON_SPAWNED', pickup });
+    return pickup;
+  }
+
+  private updateWorldPickups(dt: number) {
+    const now = Date.now();
+    const before = this.worldPickups.length;
+    this.worldPickups = this.worldPickups.filter(p => {
+      if (p.expiresAt <= now) {
+        this.broadcast({ type: 'WORLD_WEAPON_EXPIRED', pickupId: p.id });
+        return false;
+      }
+      return true;
+    });
+    void before;
+    this.nextWorldSpawnSec -= dt;
+    if (this.nextWorldSpawnSec <= 0) {
+      this.spawnWorldPickup();
+      this.nextWorldSpawnSec = WORLD_SPAWN_MIN_SEC + Math.random() * (WORLD_SPAWN_MAX_SEC - WORLD_SPAWN_MIN_SEC);
+    }
+  }
+
+  private tryCollectWorldPickup(collector: { combat: PlayerCombatState; state: PlayerServerState; playerId?: string; ws?: WebSocket }, pickupId?: string) {
+    let best: WorldWeaponPickup | undefined;
+    let bestD = 5.4 * 5.4;
+    for (const p of this.worldPickups) {
+      if (pickupId && p.id !== pickupId) continue;
+      const dx = p.x - collector.state.x;
+      const dz = p.z - collector.state.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = p;
+      }
+    }
+    if (!best) return false;
+    this.worldPickups = this.worldPickups.filter(p => p.id !== best!.id);
+    const ammo = WEAPON_CONFIGS[best.weapon].ammo;
+    collector.combat.inventory[best.weapon] = (collector.combat.inventory[best.weapon] || 0) + ammo;
+    collector.combat.weapon = best.weapon;
+    collector.combat.ammo = collector.combat.inventory[best.weapon] || ammo;
+    collector.state.combat = collector.combat;
+    const pid = collector.playerId || collector.state.id;
+    this.broadcast({
+      type: 'WORLD_WEAPON_COLLECTED',
+      pickupId: best.id,
+      collectorId: pid,
+      weapon: best.weapon,
+      ammo: collector.combat.ammo,
+      inventory: collector.combat.inventory,
+    });
+    return true;
+  }
+
+  private applyForwardCone(
+    attackerId: string,
+    attackerName: string,
+    x: number,
+    z: number,
+    heading: number,
+    range: number,
+    damage: number,
+    wType: WeaponType
+  ) {
+    const fx = Math.sin(heading);
+    const fz = Math.cos(heading);
+    for (const c of this.clients.values()) {
+      if (c.playerId === attackerId || !c.combat.isAlive) continue;
+      const dx = c.state.x - x;
+      const dz = c.state.z - z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist > range || dist < 0.2) continue;
+      const dot = (dx * fx + dz * fz) / dist;
+      if (dot < 0.2) continue;
+      const scaled = Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
+      this.dealDamageToPlayer(c, scaled, attackerId, attackerName, wType, c.state.x, c.state.z);
+    }
+    for (const b of this.arenaBots.values()) {
+      if (!b.combat.isAlive || b.state.id === attackerId) continue;
+      const dx = b.state.x - x;
+      const dz = b.state.z - z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist > range || dist < 0.2) continue;
+      const dot = (dx * fx + dz * fz) / dist;
+      if (dot < 0.2) continue;
+      const scaled = Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
+      this.dealDamageToBot(b, scaled, attackerId, attackerName, wType, b.state.x, b.state.z);
+    }
+    for (const bot of this.bots.values()) {
+      if (!bot.combat?.isAlive || bot.id === attackerId) continue;
+      const dx = bot.x - x;
+      const dz = bot.z - z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist > range || dist < 0.2) continue;
+      const dot = (dx * fx + dz * fz) / dist;
+      if (dot < 0.2) continue;
+      const scaled = Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
+      this.hurtRoadBot(bot, scaled, attackerId, attackerName, wType);
+    }
+  }
+
+  private hurtRoadBot(bot: PlayerServerState, amount: number, attackerId: string, attackerName: string, wType: WeaponType) {
+    if (!bot.combat) bot.combat = this.createCombatState();
+    if (Date.now() < bot.combat.invulnerableUntil) return;
+    bot.combat.health = Math.max(0, bot.combat.health - amount);
+    const attacker = this.clients.get(attackerId);
+    if (attacker) attacker.combat.damageDealt += amount;
+    const dead = bot.combat.health <= 0;
+    this.broadcast({
+      type: 'DAMAGE_EVENT',
+      event: {
+        id: `dmg_${Date.now()}`,
+        attackerId,
+        attackerName,
+        victimId: bot.id,
+        victimName: bot.name,
+        amount,
+        weaponType: wType,
+        x: bot.x,
+        y: 1,
+        z: bot.z,
+        isElimination: dead,
+        timestamp: Date.now(),
+      },
+    });
+    if (dead) {
+      bot.combat.isAlive = false;
+      if (attacker) attacker.combat.kills += 1;
+      this.broadcast({
+        type: 'PLAYER_ELIMINATED',
+        attackerId,
+        attackerName,
+        victimId: bot.id,
+        victimName: bot.name,
+        weaponType: wType,
+      });
+      setTimeout(() => {
+        bot.combat = this.createCombatState();
+        bot.z = -400 + Math.random() * 700;
+        bot.speed = 8.5;
+      }, 8000);
+    }
   }
 
   private handleWeaponFire(attacker: ConnectedClient, wType: WeaponType) {
@@ -538,6 +1183,69 @@ export class RoomManager {
     const muzzleZ = attacker.state.z + forwardZ * 2.2;
 
     switch (wType) {
+      case 'bat':
+      case 'pipe': {
+        const range = WEAPON_CONFIGS[wType].range || 3.4;
+        this.applyForwardCone(attacker.playerId, attacker.name, attacker.state.x, attacker.state.z, attacker.state.heading, range, WEAPON_CONFIGS[wType].damage, wType);
+        break;
+      }
+      case 'kangri': {
+        const range = WEAPON_CONFIGS.kangri.range || 5.2;
+        this.applyForwardCone(attacker.playerId, attacker.name, attacker.state.x, attacker.state.z, attacker.state.heading, range, WEAPON_CONFIGS.kangri.damage, wType);
+        this.broadcast({
+          type: 'COMBAT_EFFECT',
+          effect: 'kangri_burst',
+          playerId: attacker.playerId,
+          x: muzzleX,
+          z: muzzleZ,
+          radius: 3.2,
+        });
+        break;
+      }
+      case 'pistol':
+      case 'rifle': {
+        const spd = WEAPON_CONFIGS[wType].projectileSpeed;
+        const id = `proj_${now}_${Math.random().toString(36).substring(2, 6)}`;
+        this.projectiles.set(id, {
+          id,
+          weaponType: wType,
+          ownerId: attacker.playerId,
+          ownerName: attacker.name,
+          x: muzzleX,
+          y: 0.7,
+          z: muzzleZ,
+          vx: forwardX * spd,
+          vy: 0,
+          vz: forwardZ * spd,
+          heading: attacker.state.heading,
+          spawnTime: now,
+          lifeTimeSec: wType === 'rifle' ? 1.1 : 0.7,
+        });
+        break;
+      }
+      case 'shotgun': {
+        const spread = [-0.18, -0.06, 0.06, 0.18];
+        spread.forEach((ang, idx) => {
+          const h = attacker.state.heading + ang;
+          const id = `proj_${now}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
+          this.projectiles.set(id, {
+            id,
+            weaponType: 'shotgun',
+            ownerId: attacker.playerId,
+            ownerName: attacker.name,
+            x: muzzleX,
+            y: 0.65,
+            z: muzzleZ,
+            vx: Math.sin(h) * 62,
+            vy: 0,
+            vz: Math.cos(h) * 62,
+            heading: h,
+            spawnTime: now,
+            lifeTimeSec: 0.45,
+          });
+        });
+        break;
+      }
       case 'machinegun': {
         const id = `proj_${now}_${Math.random().toString(36).substring(2, 6)}`;
         const proj: ArenaProjectileState = {
@@ -681,7 +1389,7 @@ export class RoomManager {
 
         // Check human clients
         for (const c of this.clients.values()) {
-          if (c.playerId === attacker.playerId || c.mode !== 'battle_arena' || !c.combat.isAlive) continue;
+          if (c.playerId === attacker.playerId || !c.inMatch || !c.combat.isAlive) continue;
           const dx = c.state.x - attacker.state.x;
           const dz = c.state.z - attacker.state.z;
           const dist = Math.sqrt(dx * dx + dz * dz);
@@ -758,7 +1466,7 @@ export class RoomManager {
   private applyEmpEffect(attackerId: string, x: number, z: number, radius: number) {
     const now = Date.now();
     for (const c of this.clients.values()) {
-      if (c.playerId === attackerId || c.mode !== 'battle_arena' || !c.combat.isAlive) continue;
+      if (c.playerId === attackerId || !c.inMatch || !c.combat.isAlive) continue;
       const dx = c.state.x - x;
       const dz = c.state.z - z;
       if (dx * dx + dz * dz <= radius * radius) {
@@ -788,79 +1496,75 @@ export class RoomManager {
     return 'machinegun';
   }
 
+  private advanceMatchLifecycle(dt: number) {
+    if (this.matchState.state === 'countdown') {
+      this.matchCountdownTimer -= dt;
+      this.phaseTimerSec = this.matchCountdownTimer;
+      this.matchState.timerSec = Math.max(0, Math.ceil(this.matchCountdownTimer));
+      this.matchState.announcement = `MATCH STARTING IN ${Math.max(0, Math.ceil(this.matchCountdownTimer))}...`;
+      if (this.matchCountdownTimer <= 0) {
+        this.beginActiveMatch();
+      }
+      return;
+    }
+
+    if (this.matchState.state === 'active') {
+      this.matchClockSec = Math.max(0, this.matchClockSec - dt);
+      this.matchState.timerSec = Math.ceil(this.matchClockSec);
+      this.updateArenaPlayerCounts();
+
+      if (!this.lastMinuteAnnounced && this.matchClockSec <= 60 && this.matchClockSec > 0) {
+        this.lastMinuteAnnounced = true;
+        this.matchState.announcement = '1 MINUTE LEFT!';
+        this.broadcast({
+          type: 'MATCH_ANNOUNCEMENT',
+          announcement: '1 MINUTE LEFT!',
+          matchState: this.getPublicMatchState(),
+        });
+      }
+
+      if (this.matchClockSec <= 0) {
+        this.finishMatch();
+      }
+      return;
+    }
+
+    if (this.matchState.state === 'finished' || this.matchState.state === 'celebration') {
+      this.phaseTimerSec -= dt;
+      this.matchState.timerSec = Math.max(0, Math.ceil(this.phaseTimerSec));
+      if (this.phaseTimerSec <= 0) {
+        this.startIntermission();
+      }
+      return;
+    }
+
+    if (this.matchState.state === 'intermission') {
+      this.phaseTimerSec -= dt;
+      this.matchState.timerSec = Math.max(0, Math.ceil(this.phaseTimerSec));
+      this.matchState.announcement = 'NEXT MATCH STARTING SOON';
+      if (this.phaseTimerSec <= 0) {
+        if (this.roomClients().length >= 1) {
+          this.startArenaMatchCountdown();
+        } else {
+          this.matchState.state = 'waiting';
+          this.matchState.announcement = 'WAITING FOR PLAYERS';
+          this.matchState.timerSec = MATCH_COUNTDOWN_SEC;
+          this.broadcast({
+            type: 'MATCH_STATE_CHANGE',
+            matchState: this.getPublicMatchState(),
+            presence: this.buildPresence(),
+          });
+        }
+      }
+    }
+  }
+
   private simulationTick(dt: number) {
     const now = Date.now();
 
     // 1. Arena Match Lifecycle State Machine
-    if (this.matchState.state === 'countdown') {
-      this.matchCountdownTimer -= dt;
-      this.matchState.timerSec = Math.ceil(this.matchCountdownTimer);
-      if (this.matchCountdownTimer <= 0) {
-        this.matchState.state = 'active';
-        this.matchState.timerSec = 180; // 3-minute combat round
-        this.broadcast({
-          type: 'MATCH_STARTED',
-          matchState: this.matchState,
-        });
-      }
-    } else if (this.matchState.state === 'active') {
-      this.matchState.timerSec = Math.max(0, this.matchState.timerSec - dt);
-
-      // Check victory condition
-      const humanAlive = Array.from(this.clients.values()).filter(c => c.mode === 'battle_arena' && c.combat.isAlive);
-      const botAlive = Array.from(this.arenaBots.values()).filter(b => b.combat.isAlive);
-      const totalAlive = humanAlive.length + botAlive.length;
-
-      this.matchState.playersAlive = totalAlive;
-
-      if (totalAlive <= 1 || this.matchState.timerSec <= 0) {
-        this.matchState.state = 'finished';
-
-        let winnerId: string | undefined = undefined;
-        let winnerName: string = 'No Contest';
-
-        if (humanAlive.length === 1) {
-          winnerId = humanAlive[0].playerId;
-          winnerName = humanAlive[0].name;
-        } else if (botAlive.length === 1 && humanAlive.length === 0) {
-          winnerId = botAlive[0].state.id;
-          winnerName = botAlive[0].state.name;
-        } else if (humanAlive.length > 1) {
-          // Tie-break by highest health + kills
-          humanAlive.sort((a, b) => (b.combat.kills * 100 + b.combat.health) - (a.combat.kills * 100 + a.combat.health));
-          winnerId = humanAlive[0].playerId;
-          winnerName = humanAlive[0].name;
-        }
-
-        this.matchState.winnerId = winnerId;
-        this.matchState.winnerName = winnerName;
-
-        this.broadcast({
-          type: 'MATCH_FINISHED',
-          matchState: this.matchState,
-        });
-
-        // Persist rewards for connected players
-        for (const c of this.clients.values()) {
-          if (c.mode === 'battle_arena') {
-            const isWin = c.playerId === winnerId;
-            const rewardCash = isWin ? 5000 : 1500 + c.combat.kills * 500;
-            const rewardXp = isWin ? 600 : 200 + c.combat.kills * 150;
-            storage.recordBattleRewards(
-              c.playerId,
-              this.matchId,
-              `auto_${now}`,
-              c.combat.kills,
-              c.combat.damageDealt,
-              isWin ? 1 : 2,
-              rewardCash,
-              rewardXp,
-              isWin
-            );
-          }
-        }
-      }
-    }
+    this.advanceMatchLifecycle(dt);
+    this.updateWorldPickups(dt);
 
     // 2. Simulate Connected Clients
     for (const [id, client] of this.clients.entries()) {
@@ -939,7 +1643,7 @@ export class RoomManager {
             client.state.x = ARENA_BOUNDS.MAX_X;
             client.state.speed = -client.state.speed * 0.35;
           }
-          if (client.state.z < ROAD_BOUNDS.MIN_Z) {
+          if (client.state.z < ROAD_BOUNDS.MIN_Z && client.state.x >= -24 && client.state.x <= 18) {
             client.state.z = ROAD_BOUNDS.MIN_Z;
             if (client.state.speed < 0) client.state.speed = -client.state.speed * 0.35;
           } else if (client.state.z > ROAD_BOUNDS.MAX_Z && client.state.x >= -24 && client.state.x <= 18) {
@@ -955,7 +1659,7 @@ export class RoomManager {
             client.state.x = ROAD_BOUNDS.MAX_X;
             client.state.speed *= 0.5;
           }
-          if (client.state.z < ROAD_BOUNDS.MIN_Z) {
+          if (client.state.z < ROAD_BOUNDS.MIN_Z && client.state.x >= -24 && client.state.x <= 18) {
             client.state.z = ROAD_BOUNDS.MIN_Z;
             if (client.state.speed < 0) client.state.speed = -client.state.speed * 0.3;
           }
@@ -969,14 +1673,22 @@ export class RoomManager {
       client.state.lastAckSeq = lastProcessedSeq;
       client.state.combat = client.combat;
 
+      if (client.wantsFire) {
+        this.tryFireWeapon(client);
+      }
+
       // Crate pickup in battle arena
-      if (client.mode === 'battle_arena' && client.combat.isAlive) {
+      if (client.inMatch && this.matchState.state === 'active' && client.combat.isAlive) {
         this.checkCratePickup(client);
       }
     }
 
-    // 3. Simulate Free-Roam AI Bots
+    // 3. Simulate Free-Roam AI Bots (server-authoritative, shared across sessions)
     for (const [bId, bot] of this.bots.entries()) {
+      if (bot.combat && !bot.combat.isAlive) {
+        bot.speed = 0;
+        continue;
+      }
       const dir = bot.heading === 0 ? 1 : -1;
       bot.z += dir * bot.speed * dt;
       if (dir === 1 && bot.z > 390) {
@@ -986,11 +1698,39 @@ export class RoomManager {
         bot.heading = 0;
         bot.x = -3.5;
       }
+      if (!bot.combat) bot.combat = this.createCombatState();
+      if (!bot.combat.weapon && (bot.id === 'bot_taxi_1' || bot.id === 'bot_police_1')) {
+        this.tryCollectWorldPickup({ combat: bot.combat, state: bot });
+      }
+      const armed = bot.combat.weapon;
+      if (armed && (bot.combat.inventory[armed] || 0) > 0 && now - (bot.lastAckSeq || 0) > 2400) {
+        for (const c of this.clients.values()) {
+          if (!c.combat.isAlive) continue;
+          const dx = c.state.x - bot.x;
+          const dz = c.state.z - bot.z;
+          if (dx * dx + dz * dz < 20 * 20) {
+            bot.lastAckSeq = now;
+            bot.combat.inventory[armed] = Math.max(0, (bot.combat.inventory[armed] || 1) - 1);
+            bot.combat.ammo = bot.combat.inventory[armed] || 0;
+            const cfg = WEAPON_CONFIGS[armed];
+            this.applyForwardCone(bot.id, bot.name, bot.x, bot.z, bot.heading, cfg.range || 8, cfg.damage, armed);
+            this.broadcast({
+              type: 'WEAPON_FIRED',
+              ownerId: bot.id,
+              weaponType: armed,
+              x: bot.x,
+              z: bot.z,
+              heading: bot.heading,
+            });
+            break;
+          }
+        }
+      }
     }
 
     // 4. Simulate Battle Arena Combat Bots
     for (const [abId, b] of this.arenaBots.entries()) {
-      if (!b.combat.isAlive) continue;
+      if (!b.combat.isAlive || this.matchState.state !== 'active') continue;
 
       const targetCrate = this.crates[b.targetCrateIndex];
       let tx = targetCrate?.x || 0;
@@ -1023,17 +1763,14 @@ export class RoomManager {
         const cdx = cr.x - b.state.x;
         const cdz = cr.z - b.state.z;
         if (cdx * cdx + cdz * cdz < 2.8 * 2.8) {
-          cr.active = false;
-          cr.respawnTimer = 9.0;
-          b.combat.weapon = this.getRandomWeapon();
-          b.combat.ammo = WEAPON_CONFIGS[b.combat.weapon].ammo;
+          this.grantCrateWeapon(b.combat, b.state.id, cr);
         }
       }
 
       // Bot firing at nearby players
       if (b.combat.weapon && b.combat.ammo > 0 && now - b.lastFireTime > 2500) {
         for (const c of this.clients.values()) {
-          if (c.mode === 'battle_arena' && c.combat.isAlive) {
+          if (c.inMatch && c.combat.isAlive) {
             const pdx = c.state.x - b.state.x;
             const pdz = c.state.z - b.state.z;
             const dist = Math.sqrt(pdx * pdx + pdz * pdz);
@@ -1070,11 +1807,13 @@ export class RoomManager {
         if (c.respawnTimer <= 0) {
           c.active = true;
           c.respawnTimer = 0;
+          this.pickupLocks.delete(c.id);
           this.broadcast({
             type: 'CRATE_SPAWNED',
             crateId: c.id,
             x: c.x,
             z: c.z,
+            glow: true,
           });
         }
       }
@@ -1087,32 +1826,50 @@ export class RoomManager {
     this.updateHazards(now);
   }
 
+  private grantCrateWeapon(
+    combat: PlayerCombatState,
+    collectorId: string,
+    cr: ArenaCrateState
+  ): boolean {
+    if (!cr.active || this.pickupLocks.has(cr.id)) return false;
+    this.pickupLocks.add(cr.id);
+    cr.active = false;
+    cr.respawnTimer = PICKUP_RESPAWN_SEC;
+
+    const weapon = this.getRandomWeapon();
+    const ammoGain = WEAPON_CONFIGS[weapon].ammo;
+    combat.inventory[weapon] = (combat.inventory[weapon] || 0) + ammoGain;
+    combat.weapon = weapon;
+    combat.ammo = combat.inventory[weapon] || ammoGain;
+
+    const human = this.clients.get(collectorId);
+    if (human?.ws.readyState === WebSocket.OPEN) {
+      human.ws.send(JSON.stringify({
+        type: 'WEAPON_ACQUIRED',
+        weapon,
+        ammo: combat.ammo,
+        inventory: combat.inventory,
+      }));
+    }
+
+    this.broadcast({
+      type: 'CRATE_COLLECTED',
+      crateId: cr.id,
+      collectorId,
+      respawnSec: PICKUP_RESPAWN_SEC,
+    });
+    this.pickupLocks.delete(cr.id);
+    return true;
+  }
+
   private checkCratePickup(client: ConnectedClient) {
     for (const cr of this.crates) {
       if (!cr.active) continue;
       const dx = cr.x - client.state.x;
       const dz = cr.z - client.state.z;
       if (dx * dx + dz * dz < 2.8 * 2.8) {
-        cr.active = false;
-        cr.respawnTimer = 8 + Math.random() * 4; // 8 - 12 seconds respawn
-
-        const weapon = this.getRandomWeapon();
-        client.combat.weapon = weapon;
-        client.combat.ammo = WEAPON_CONFIGS[weapon].ammo;
-
-        if (client.ws.readyState === WebSocket.OPEN) {
-          client.ws.send(JSON.stringify({
-            type: 'WEAPON_ACQUIRED',
-            weapon,
-            ammo: client.combat.ammo,
-          }));
-        }
-
-        this.broadcast({
-          type: 'CRATE_COLLECTED',
-          crateId: cr.id,
-          collectorId: client.playerId,
-        });
+        this.grantCrateWeapon(client.combat, client.playerId, cr);
+        client.state.combat = client.combat;
         break;
       }
     }
@@ -1178,7 +1935,8 @@ export class RoomManager {
       // Check collision with human players
       let hit = false;
       for (const c of this.clients.values()) {
-        if (c.playerId === p.ownerId || c.mode !== 'battle_arena' || !c.combat.isAlive) continue;
+        if (c.playerId === p.ownerId || !c.combat.isAlive) continue;
+        if (c.mode === 'battle_arena' && !c.inMatch) continue;
         const dx = c.state.x - p.x;
         const dz = c.state.z - p.z;
         if (dx * dx + dz * dz < 2.0 * 2.0) {
@@ -1188,7 +1946,7 @@ export class RoomManager {
         }
       }
 
-      // Check collision with bots
+      // Check collision with arena bots
       if (!hit) {
         for (const b of this.arenaBots.values()) {
           if (b.state.id === p.ownerId || !b.combat.isAlive) continue;
@@ -1196,6 +1954,19 @@ export class RoomManager {
           const dz = b.state.z - p.z;
           if (dx * dx + dz * dz < 2.0 * 2.0) {
             this.applyDirectHitBot(b, p);
+            hit = true;
+            break;
+          }
+        }
+      }
+
+      if (!hit) {
+        for (const bot of this.bots.values()) {
+          if (bot.id === p.ownerId || !bot.combat?.isAlive) continue;
+          const dx = bot.x - p.x;
+          const dz = bot.z - p.z;
+          if (dx * dx + dz * dz < 2.0 * 2.0) {
+            this.hurtRoadBot(bot, WEAPON_CONFIGS[p.weaponType].damage, p.ownerId, p.ownerName, p.weaponType);
             hit = true;
             break;
           }
@@ -1247,7 +2018,7 @@ export class RoomManager {
 
     // Splash damage to nearby clients
     for (const c of this.clients.values()) {
-      if (c.playerId === p.ownerId || c.mode !== 'battle_arena' || !c.combat.isAlive) continue;
+      if (c.playerId === p.ownerId || !c.inMatch || !c.combat.isAlive) continue;
       const dx = c.state.x - x;
       const dz = c.state.z - z;
       const d2 = dx * dx + dz * dz;
@@ -1282,6 +2053,10 @@ export class RoomManager {
     z: number
   ) {
     const now = Date.now();
+    if (victim.mode === 'battle_arena') {
+      if (this.matchState.state !== 'active') return;
+      if (!victim.inMatch) return;
+    }
     if (now < victim.combat.invulnerableUntil) return; // Spawn protection
 
     let dmgRemaining = amount;
@@ -1329,6 +2104,7 @@ export class RoomManager {
 
     if (isElim) {
       victim.combat.isAlive = false;
+      victim.combat.deaths += 1;
       this.broadcast({
         type: 'PLAYER_ELIMINATED',
         attackerId,
@@ -1336,6 +2112,7 @@ export class RoomManager {
         victimId: victim.playerId,
         victimName: victim.name,
         weaponType: wType,
+        announcement: 'PLAYER ELIMINATED',
       });
       this.updateArenaPlayerCounts();
     }
@@ -1351,6 +2128,7 @@ export class RoomManager {
     z: number
   ) {
     const now = Date.now();
+    if (this.matchState.state !== 'active') return;
     if (now < victim.combat.invulnerableUntil) return;
 
     let dmgRemaining = amount;
@@ -1397,6 +2175,7 @@ export class RoomManager {
 
     if (isElim) {
       victim.combat.isAlive = false;
+      victim.combat.deaths += 1;
       this.broadcast({
         type: 'PLAYER_ELIMINATED',
         attackerId,
@@ -1404,6 +2183,7 @@ export class RoomManager {
         victimId: victim.state.id,
         victimName: victim.state.name,
         weaponType: wType,
+        announcement: 'PLAYER ELIMINATED',
       });
       this.updateArenaPlayerCounts();
     }
@@ -1420,7 +2200,7 @@ export class RoomManager {
 
       // Check collision with players
       for (const c of this.clients.values()) {
-        if (c.mode !== 'battle_arena' || !c.combat.isAlive) continue;
+        if (!c.inMatch || !c.combat.isAlive) continue;
         const dx = c.state.x - h.x;
         const dz = c.state.z - h.z;
         if (dx * dx + dz * dz < 2.5 * 2.5) {
@@ -1464,9 +2244,11 @@ export class RoomManager {
       time: Date.now(),
       players: this.getAllEntities(),
       crates: this.crates,
+      worldPickups: this.worldPickups,
       projectiles: Array.from(this.projectiles.values()),
       hazards: Array.from(this.hazards.values()),
-      matchState: this.matchState,
+      matchState: this.getPublicMatchState(),
+      presence: this.buildPresence(),
     });
 
     for (const client of this.clients.values()) {
