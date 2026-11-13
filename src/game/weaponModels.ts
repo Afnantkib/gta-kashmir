@@ -24,33 +24,71 @@ export function createWeaponMesh(type: WeaponType): THREE.Group {
   }
 }
 
+function pickupNameSprite(label: string) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 48;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = 'rgba(15, 18, 22, 0.72)';
+  ctx.fillRect(8, 8, 240, 32);
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = 'bold 20px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, 128, 32);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false }));
+  sprite.scale.set(2.4, 0.45, 1);
+  sprite.position.y = 1.15;
+  return sprite;
+}
+
 export function createWorldPickupMesh(type: WeaponType): THREE.Group {
   const root = new THREE.Group();
   const weapon = createWeaponMesh(type);
-  weapon.scale.setScalar(type === 'kangri' ? 1.15 : 1.25);
-  weapon.position.y = 0.35;
+  const isKangri = type === 'kangri';
+  const isMelee = type === 'bat' || type === 'pipe';
+  weapon.scale.setScalar(isKangri ? 1.35 : 1.55);
+  if (isKangri) {
+    weapon.position.y = 0.18;
+  } else if (isMelee) {
+    weapon.rotation.z = Math.PI / 2;
+    weapon.position.y = 0.12;
+  } else {
+    weapon.rotation.x = Math.PI / 2;
+    weapon.position.y = 0.1;
+  }
   root.add(weapon);
 
+  const labels: Record<string, string> = {
+    bat: 'WOODEN BAT',
+    pipe: 'METAL PIPE',
+    pistol: 'PISTOL',
+    shotgun: 'SHOTGUN',
+    rifle: 'RIFLE',
+    kangri: 'KANGRI',
+  };
+  root.add(pickupNameSprite(labels[type] || type.toUpperCase()));
+
   const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.55, 0.85, 20).rotateX(-Math.PI / 2),
+    new THREE.RingGeometry(0.45, 0.7, 20).rotateX(-Math.PI / 2),
     new THREE.MeshBasicMaterial({
-      color: type === 'kangri' ? 0xff6a1a : 0xfbbf24,
+      color: isKangri ? 0xc2410c : 0xd6d3d1,
       transparent: true,
-      opacity: 0.75,
+      opacity: 0.45,
       side: THREE.DoubleSide,
     })
   );
-  ring.position.y = 0.04;
+  ring.position.y = 0.03;
   root.add(ring);
 
   const shadow = new THREE.Mesh(
-    new THREE.CircleGeometry(0.55, 14).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28 })
+    new THREE.CircleGeometry(0.5, 14).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32 })
   );
-  shadow.position.y = 0.02;
+  shadow.position.y = 0.015;
   root.add(shadow);
   root.userData.weapon = weapon;
-  root.userData.isKangri = type === 'kangri';
+  root.userData.isKangri = isKangri;
+  root.userData.baseY = weapon.position.y;
   return root;
 }
 
@@ -69,61 +107,84 @@ function createBat(): THREE.Group {
 
 function createPipe(): THREE.Group {
   const g = new THREE.Group();
-  const steel = mat(0xc5ced4, { roughness: 0.28, metalness: 0.92 });
-  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 1.15, 10), steel);
+  const steel = mat(0xc5ced4, { roughness: 0.22, metalness: 0.95 });
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.058, 1.2, 12, 1, true), steel);
   tube.position.y = 0.55;
-  const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.08, 10), steel);
+  const bore = new THREE.Mesh(
+    new THREE.CircleGeometry(0.042, 12),
+    mat(0x1f2933, { metalness: 0.8, roughness: 0.4 })
+  );
+  bore.position.y = 1.15;
+  bore.rotation.x = -Math.PI / 2;
+  const bore2 = bore.clone();
+  bore2.position.y = -0.05;
+  bore2.rotation.x = Math.PI / 2;
+  const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.08, 12), steel);
   flange.position.y = 1.12;
   const rust = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.018, 6, 10), mat(0x8a5a32, { metalness: 0.6 }));
   rust.position.y = 0.35;
   rust.rotation.x = Math.PI / 2;
-  g.add(tube, flange, rust);
+  g.add(tube, bore, bore2, flange, rust);
   return g;
 }
 
 function createPistol(): THREE.Group {
   const g = new THREE.Group();
-  const iron = mat(0x1b1d20, { roughness: 0.4, metalness: 0.75 });
-  const slide = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 0.32), iron);
-  slide.position.set(0, 0.22, 0.02);
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.18, 0.1), mat(0x111111, { roughness: 0.7 }));
-  grip.position.set(0, 0.08, -0.08);
-  grip.rotation.x = 0.25;
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.16, 8), iron);
+  const iron = mat(0x1b1d20, { roughness: 0.35, metalness: 0.82 });
+  const slide = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.09, 0.34), iron);
+  slide.position.set(0, 0.24, 0.04);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 0.22), iron);
+  frame.position.set(0, 0.17, 0.0);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.2, 0.11), mat(0x141414, { roughness: 0.75 }));
+  grip.position.set(0, 0.07, -0.1);
+  grip.rotation.x = 0.28;
+  const guard = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.008, 6, 10, Math.PI), iron);
+  guard.position.set(0, 0.13, 0.02);
+  guard.rotation.x = Math.PI / 2;
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.18, 8), iron);
   barrel.rotation.x = Math.PI / 2;
-  barrel.position.set(0, 0.22, 0.2);
-  g.add(slide, grip, barrel);
+  barrel.position.set(0, 0.235, 0.24);
+  g.add(slide, frame, grip, guard, barrel);
   return g;
 }
 
 function createShotgun(): THREE.Group {
   const g = new THREE.Group();
-  const iron = mat(0x2a2e32, { roughness: 0.35, metalness: 0.8 });
-  const wood = mat(0x5a3418, { roughness: 0.8 });
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.038, 0.7, 8), iron);
+  const iron = mat(0x2a2e32, { roughness: 0.32, metalness: 0.84 });
+  const wood = mat(0x5a3418, { roughness: 0.82 });
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.036, 0.85, 8), iron);
   barrel.rotation.x = Math.PI / 2;
-  barrel.position.set(0, 0.22, 0.15);
+  barrel.position.set(0, 0.24, 0.22);
   const barrel2 = barrel.clone();
-  barrel2.position.y = 0.16;
-  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.12, 0.28), wood);
-  stock.position.set(0, 0.14, -0.28);
-  g.add(barrel, barrel2, stock);
+  barrel2.position.y = 0.175;
+  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.28), iron);
+  receiver.position.set(0, 0.2, -0.12);
+  const pump = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.22), wood);
+  pump.position.set(0, 0.16, 0.08);
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.12, 0.34), wood);
+  stock.position.set(0, 0.14, -0.38);
+  g.add(barrel, barrel2, receiver, pump, stock);
   return g;
 }
 
 function createRifle(): THREE.Group {
   const g = new THREE.Group();
-  const iron = mat(0x15181c, { roughness: 0.38, metalness: 0.7 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.1, 0.55), iron);
+  const iron = mat(0x15181c, { roughness: 0.36, metalness: 0.72 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.1, 0.58), iron);
   body.position.set(0, 0.2, 0);
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.55, 8), iron);
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.28), iron);
+  stock.position.set(0, 0.16, -0.4);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.7, 8), iron);
   barrel.rotation.x = Math.PI / 2;
-  barrel.position.set(0, 0.22, 0.42);
-  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.16, 0.08), iron);
-  mag.position.set(0, 0.06, -0.02);
-  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.06, 0.08), mat(0x0ea5e9, { emissive: 0x0369a1, emissiveIntensity: 0.4 }));
-  sight.position.set(0, 0.28, 0.05);
-  g.add(body, barrel, mag, sight);
+  barrel.position.set(0, 0.22, 0.52);
+  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.18, 0.08), iron);
+  mag.position.set(0, 0.05, -0.02);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.14, 0.07), iron);
+  grip.position.set(0, 0.08, -0.16);
+  grip.rotation.x = 0.35;
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.05, 0.08), mat(0x4b5563, { metalness: 0.6 }));
+  sight.position.set(0, 0.28, 0.08);
+  g.add(body, stock, barrel, mag, grip, sight);
   return g;
 }
 
@@ -176,8 +237,9 @@ function createGenericPickup(type: WeaponType): THREE.Group {
 export function updatePickupVisual(root: THREE.Group, dt: number, clock: number) {
   const weapon = root.userData.weapon as THREE.Group | undefined;
   if (weapon) {
-    weapon.rotation.y += dt * 1.4;
-    weapon.position.y = 0.35 + Math.sin(clock * 2.4) * 0.08;
+    weapon.rotation.y += dt * 0.9;
+    const baseY = (root.userData.baseY as number) || 0.12;
+    weapon.position.y = baseY + Math.sin(clock * 2.1) * 0.05;
   }
   if (root.userData.isKangri && weapon) {
     const coals = weapon.userData.coals as THREE.Mesh | undefined;

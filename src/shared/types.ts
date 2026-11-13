@@ -178,26 +178,26 @@ export const WEAPON_SLOT_ORDER: WeaponType[] = [
   'homing',
 ];
 
-export const MAX_WORLD_PICKUPS = 6;
-export const WORLD_PICKUP_LIFETIME_SEC = 48;
+export const MAX_WORLD_PICKUPS = 8;
+export const WORLD_SLOT_RESPAWN_SEC = 30;
 export const WORLD_SPAWN_MIN_SEC = 30;
 export const WORLD_SPAWN_MAX_SEC = 60;
 
 export const WORLD_WEAPON_SPAWNS: { x: number; z: number }[] = [
-  { x: 6.2, z: -390 },
-  { x: -5.4, z: -340 },
-  { x: 5.8, z: -280 },
-  { x: -4.8, z: -220 },
-  { x: 6.0, z: -170 },
-  { x: -5.2, z: -90 },
-  { x: 7.2, z: 60 },
-  { x: -4.6, z: 110 },
-  { x: 6.4, z: 180 },
-  { x: -5.0, z: 240 },
-  { x: 5.6, z: 300 },
-  { x: -4.4, z: 360 },
-  { x: 3.2, z: -50 },
-  { x: -3.8, z: 20 },
+  { x: 3.4, z: -390 },
+  { x: -3.4, z: -340 },
+  { x: 3.4, z: -280 },
+  { x: -3.4, z: -220 },
+  { x: 3.4, z: -170 },
+  { x: -3.4, z: -90 },
+  { x: 3.4, z: 60 },
+  { x: -3.4, z: 110 },
+  { x: 3.4, z: 180 },
+  { x: -3.4, z: 240 },
+  { x: 3.4, z: 300 },
+  { x: -3.4, z: 360 },
+  { x: 3.4, z: -50 },
+  { x: -3.4, z: 20 },
 ];
 
 export interface WeaponDefinition {
@@ -431,11 +431,13 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponDefinition> = {
 
 export interface WorldWeaponPickup {
   id: string;
+  slot: number;
   weapon: StreetWeaponType;
   x: number;
   y: number;
   z: number;
-  expiresAt: number;
+  active: boolean;
+  respawnAt: number;
 }
 
 // Battle Arena Spatial Bounds (Dedicated Dal Lake Mayhem Arena Zone)

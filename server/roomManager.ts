@@ -31,7 +31,7 @@ import {
   WorldWeaponPickup,
   WORLD_WEAPON_SPAWNS,
   MAX_WORLD_PICKUPS,
-  WORLD_PICKUP_LIFETIME_SEC,
+  WORLD_SLOT_RESPAWN_SEC,
   WORLD_SPAWN_MIN_SEC,
   WORLD_SPAWN_MAX_SEC,
 } from '../src/shared/types.ts';
@@ -444,8 +444,16 @@ export class RoomManager {
             case 'PICKUP_WEAPON': {
               if (!clientSessionId) return;
               const client = this.clients.get(clientSessionId);
-              if (!client) return;
-              this.tryCollectWorldPickup(client, msg.pickupId);
+              if (!client || !client.combat.isAlive) return;
+              const px = Number(msg.x);
+              const pz = Number(msg.z);
+              this.tryCollectWorldPickup(
+                client,
+                msg.pickupId,
+                Number.isFinite(px) ? px : undefined,
+                Number.isFinite(pz) ? pz : undefined,
+                true
+              );
               break;
             }
 
@@ -988,64 +996,69 @@ export class RoomManager {
   }
 
   private seedWorldPickups() {
-    this.worldPickups = [];
-    for (let i = 0; i < 3; i++) this.spawnWorldPickup();
+    this.worldPickups = WORLD_WEAPON_SPAWNS.map((spot, slot) => ({
+      id: `spawn_${slot}`,
+      slot,
+      weapon: STREET_WEAPON_ORDER[slot % STREET_WEAPON_ORDER.length],
+      x: spot.x,
+      y: 0.08,
+      z: spot.z,
+      active: false,
+      respawnAt: 0,
+    }));
+    const order = [...this.worldPickups.keys()].sort(() => Math.random() - 0.5);
+    let on = 0;
+    for (const idx of order) {
+      if (on >= MAX_WORLD_PICKUPS) break;
+      this.worldPickups[idx].active = true;
+      on++;
+    }
     this.nextWorldSpawnSec = WORLD_SPAWN_MIN_SEC + Math.random() * (WORLD_SPAWN_MAX_SEC - WORLD_SPAWN_MIN_SEC);
   }
 
-  private randomStreetWeapon(): StreetWeaponType {
-    const weights = STREET_WEAPON_ORDER.map(id => WEAPON_CONFIGS[id].dropProbability);
-    const total = weights.reduce((a, b) => a + b, 0);
-    let roll = Math.random() * total;
-    for (let i = 0; i < STREET_WEAPON_ORDER.length; i++) {
-      roll -= weights[i];
-      if (roll <= 0) return STREET_WEAPON_ORDER[i];
-    }
-    return 'bat';
+  private activePickupCount() {
+    return this.worldPickups.filter(p => p.active).length;
+  }
+
+  private slotOccupied(p: WorldWeaponPickup) {
+    return (
+      Array.from(this.clients.values()).some(c => {
+        const dx = c.state.x - p.x;
+        const dz = c.state.z - p.z;
+        return dx * dx + dz * dz < 9;
+      }) ||
+      Array.from(this.bots.values()).some(b => {
+        const dx = b.x - p.x;
+        const dz = b.z - p.z;
+        return dx * dx + dz * dz < 9;
+      })
+    );
+  }
+
+  private activatePickupSlot(p: WorldWeaponPickup) {
+    if (p.active) return false;
+    if (this.activePickupCount() >= MAX_WORLD_PICKUPS) return false;
+    if (this.slotOccupied(p)) return false;
+    p.active = true;
+    p.respawnAt = 0;
+    this.broadcast({ type: 'WORLD_WEAPON_SPAWNED', pickup: { ...p } });
+    return true;
   }
 
   private spawnWorldPickup(): WorldWeaponPickup | null {
-    if (this.worldPickups.length >= MAX_WORLD_PICKUPS) return null;
-    const used = new Set(this.worldPickups.map(p => `${p.x}:${p.z}`));
-    const spots = WORLD_WEAPON_SPAWNS.filter(s => !used.has(`${s.x}:${s.z}`));
-    if (!spots.length) return null;
-    const spot = spots[Math.floor(Math.random() * spots.length)];
-    const tooClose =
-      Array.from(this.clients.values()).some(c => {
-        const dx = c.state.x - spot.x;
-        const dz = c.state.z - spot.z;
-        return dx * dx + dz * dz < 16;
-      }) ||
-      Array.from(this.bots.values()).some(b => {
-        const dx = b.x - spot.x;
-        const dz = b.z - spot.z;
-        return dx * dx + dz * dz < 16;
-      });
-    if (tooClose) return null;
-    const pickup: WorldWeaponPickup = {
-      id: `wp_${this.worldPickupSeq++}`,
-      weapon: this.randomStreetWeapon(),
-      x: spot.x,
-      y: 0.2,
-      z: spot.z,
-      expiresAt: Date.now() + WORLD_PICKUP_LIFETIME_SEC * 1000,
-    };
-    this.worldPickups.push(pickup);
-    this.broadcast({ type: 'WORLD_WEAPON_SPAWNED', pickup });
-    return pickup;
+    const idle = this.worldPickups.filter(p => !p.active && p.respawnAt === 0);
+    if (!idle.length) return null;
+    const pick = idle[Math.floor(Math.random() * idle.length)];
+    return this.activatePickupSlot(pick) ? pick : null;
   }
 
   private updateWorldPickups(dt: number) {
     const now = Date.now();
-    const before = this.worldPickups.length;
-    this.worldPickups = this.worldPickups.filter(p => {
-      if (p.expiresAt <= now) {
-        this.broadcast({ type: 'WORLD_WEAPON_EXPIRED', pickupId: p.id });
-        return false;
+    for (const p of this.worldPickups) {
+      if (!p.active && p.respawnAt > 0 && now >= p.respawnAt) {
+        this.activatePickupSlot(p);
       }
-      return true;
-    });
-    void before;
+    }
     this.nextWorldSpawnSec -= dt;
     if (this.nextWorldSpawnSec <= 0) {
       this.spawnWorldPickup();
@@ -1053,21 +1066,42 @@ export class RoomManager {
     }
   }
 
-  private tryCollectWorldPickup(collector: { combat: PlayerCombatState; state: PlayerServerState; playerId?: string; ws?: WebSocket }, pickupId?: string) {
+  private tryCollectWorldPickup(
+    collector: { combat: PlayerCombatState; state: PlayerServerState; playerId?: string; ws?: WebSocket },
+    pickupId?: string,
+    hintX?: number,
+    hintZ?: number,
+    trustClientId = false
+  ) {
+    const points = [
+      { x: collector.state.x, z: collector.state.z },
+      ...(hintX !== undefined && hintZ !== undefined ? [{ x: hintX, z: hintZ }] : []),
+    ];
     let best: WorldWeaponPickup | undefined;
-    let bestD = 5.4 * 5.4;
+    let bestD = 8 * 8;
     for (const p of this.worldPickups) {
+      if (!p.active) continue;
       if (pickupId && p.id !== pickupId) continue;
-      const dx = p.x - collector.state.x;
-      const dz = p.z - collector.state.z;
-      const d2 = dx * dx + dz * dz;
-      if (d2 < bestD) {
-        bestD = d2;
+      if (trustClientId && pickupId && p.id === pickupId) {
         best = p;
+        bestD = 0;
+        break;
+      }
+      for (const pt of points) {
+        const dx = p.x - pt.x;
+        const dz = p.z - pt.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestD) {
+          bestD = d2;
+          best = p;
+        }
       }
     }
     if (!best) return false;
-    this.worldPickups = this.worldPickups.filter(p => p.id !== best!.id);
+    if (this.pickupLocks.has(best.id)) return false;
+    this.pickupLocks.add(best.id);
+    best.active = false;
+    best.respawnAt = Date.now() + WORLD_SLOT_RESPAWN_SEC * 1000;
     const ammo = WEAPON_CONFIGS[best.weapon].ammo;
     collector.combat.inventory[best.weapon] = (collector.combat.inventory[best.weapon] || 0) + ammo;
     collector.combat.weapon = best.weapon;
@@ -1081,7 +1115,9 @@ export class RoomManager {
       weapon: best.weapon,
       ammo: collector.combat.ammo,
       inventory: collector.combat.inventory,
+      respawnAt: best.respawnAt,
     });
+    setTimeout(() => this.pickupLocks.delete(best!.id), 80);
     return true;
   }
 
@@ -1677,6 +1713,10 @@ export class RoomManager {
         this.tryFireWeapon(client);
       }
 
+      if (client.combat.isAlive) {
+        this.tryCollectWorldPickup(client);
+      }
+
       // Crate pickup in battle arena
       if (client.inMatch && this.matchState.state === 'active' && client.combat.isAlive) {
         this.checkCratePickup(client);
@@ -1699,9 +1739,6 @@ export class RoomManager {
         bot.x = -3.5;
       }
       if (!bot.combat) bot.combat = this.createCombatState();
-      if (!bot.combat.weapon && (bot.id === 'bot_taxi_1' || bot.id === 'bot_police_1')) {
-        this.tryCollectWorldPickup({ combat: bot.combat, state: bot });
-      }
       const armed = bot.combat.weapon;
       if (armed && (bot.combat.inventory[armed] || 0) > 0 && now - (bot.lastAckSeq || 0) > 2400) {
         for (const c of this.clients.values()) {

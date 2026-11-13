@@ -57,12 +57,31 @@ function ensureHeldWeapon(bundle: VehicleMeshBundle, weapon: WeaponType | null) 
   bundle.root.userData.heldType = weapon;
   if (!weapon) return;
   const mesh = createWeaponMesh(weapon);
-  mesh.scale.setScalar(0.82);
-  mesh.position.set(0.62, 0.78, 0.28);
-  mesh.rotation.z = -0.55;
-  mesh.rotation.x = 0.2;
+  mesh.scale.setScalar(weapon === 'kangri' ? 0.95 : 0.9);
+  mesh.position.set(0.7, 0.92, 0.55);
+  mesh.rotation.x = weapon === 'bat' || weapon === 'pipe' ? 0.9 : 0.15;
+  mesh.rotation.z = -0.35;
+  mesh.rotation.y = 0;
+  mesh.userData.baseRotX = mesh.rotation.x;
+  mesh.userData.baseRotZ = mesh.rotation.z;
   bundle.body.add(mesh);
   bundle.root.userData.heldMesh = mesh;
+}
+
+function animateHeldWeapon(mesh: THREE.Object3D, dt: number) {
+  const baseX = mesh.userData.baseRotX || 0;
+  const baseZ = mesh.userData.baseRotZ || 0;
+  if (mesh.userData.kick > 0) {
+    mesh.rotation.x = baseX - mesh.userData.kick;
+    mesh.userData.kick = Math.max(0, mesh.userData.kick - dt * 1.6);
+  } else if (mesh.userData.swing > 0) {
+    mesh.rotation.z = baseZ - Math.sin(mesh.userData.swing * 18) * 0.8;
+    mesh.userData.swing += dt;
+    if (mesh.userData.swing > 0.35) mesh.userData.swing = 0;
+  } else {
+    mesh.rotation.x += (baseX - mesh.rotation.x) * Math.min(1, 12 * dt);
+    mesh.rotation.z += (baseZ - mesh.rotation.z) * Math.min(1, 12 * dt);
+  }
 }
 
 // Third-Person Chase Camera Calibration Profiles for each vehicle
@@ -229,6 +248,12 @@ export default function App() {
   });
   const [isMatchResultsOpen, setIsMatchResultsOpen] = useState(false);
   const [nearbyPickup, setNearbyPickup] = useState<WorldWeaponPickup | null>(null);
+  const matchStateRef = useRef<ArenaMatchState>({
+    state: 'waiting',
+    timerSec: 180,
+    totalPlayers: 0,
+    playersAlive: 0,
+  });
 
   // References to live mutable game state
   const clashTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -266,6 +291,8 @@ export default function App() {
   const localWeaponMeshRef = useRef<THREE.Group | null>(null);
   const equippedWeaponRef = useRef<WeaponType | null>(null);
   const nearbyPickupRef = useRef<WorldWeaponPickup | null>(null);
+  const autoPickupSentRef = useRef<string | null>(null);
+  const autoPickupAtRef = useRef(0);
 
   // Three.js mutable scene handles
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -306,6 +333,7 @@ export default function App() {
         isAlive?: boolean;
         isNpc?: boolean;
         weapon?: WeaponType | null;
+        mode?: GameMode;
       }
     >
   >(new Map());
@@ -390,10 +418,15 @@ export default function App() {
     equippedWeaponRef.current = equippedWeapon;
   }, [equippedWeapon]);
 
+  useEffect(() => {
+    matchStateRef.current = matchState;
+  }, [matchState]);
+
   const collectNearbyPickup = useCallback((pickupId?: string) => {
     const id = typeof pickupId === 'string' ? pickupId : nearbyPickupRef.current?.id;
     if (!id || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ type: 'PICKUP_WEAPON', pickupId: id }));
+    const loc = localStateRef.current;
+    wsRef.current.send(JSON.stringify({ type: 'PICKUP_WEAPON', pickupId: id, x: loc.x, z: loc.z }));
   }, []);
 
   const useBoost = useCallback(() => {
@@ -762,7 +795,7 @@ export default function App() {
             serverCratesRef.current = msg.crates;
           }
           if (msg.worldPickups) {
-            worldPickupsRef.current = msg.worldPickups;
+            worldPickupsRef.current = (msg.worldPickups as WorldWeaponPickup[]).filter(p => p.active !== false);
           }
           if (msg.matchState) {
             setMatchState(msg.matchState);
@@ -770,6 +803,13 @@ export default function App() {
           if (msg.presence) {
             setPresence(msg.presence);
             setConnectedPlayersCount(msg.presence.online);
+          }
+          const me = (msg.players as PlayerServerState[] | undefined)?.find(p => p.id === playerIdRef.current);
+          if (me) {
+            localStateRef.current.x = me.x;
+            localStateRef.current.z = me.z;
+            localStateRef.current.heading = me.heading;
+            localStateRef.current.speed = me.speed;
           }
         } else if (msg.type === 'STATE_SNAPSHOT') {
           const players: PlayerServerState[] = msg.players || [];
@@ -781,7 +821,9 @@ export default function App() {
           }
 
           if (msg.crates) serverCratesRef.current = msg.crates;
-          if (msg.worldPickups) worldPickupsRef.current = msg.worldPickups;
+          if (msg.worldPickups) {
+            worldPickupsRef.current = (msg.worldPickups as WorldWeaponPickup[]).filter(p => p.active !== false);
+          }
           if (msg.projectiles) serverProjectilesRef.current = msg.projectiles;
           if (msg.hazards) serverHazardsRef.current = msg.hazards;
           if (msg.matchState) {
@@ -791,7 +833,8 @@ export default function App() {
             setIsMatchResultsOpen(phase === 'finished' || phase === 'celebration');
           }
 
-          // Sync local combat data from server snapshot
+          // Sync local combat data from server snapshot.
+          // Do not snap driving position here — that rubber-bands the local car backward.
           const localServerPlayer = players.find(p => p.id === playerIdRef.current);
           if (localServerPlayer?.combat) {
             setPlayerHealth(localServerPlayer.combat.health);
@@ -825,6 +868,7 @@ export default function App() {
               isAlive: p.combat?.isAlive,
               isNpc: !!p.isNpc,
               weapon: p.combat?.weapon || null,
+              mode: p.mode,
             });
 
             const existing = remoteVehicleBundlesRef.current.get(p.id);
@@ -836,6 +880,8 @@ export default function App() {
             if (!remoteVehicleBundlesRef.current.has(p.id)) {
               const rMesh = createVehicleMesh(p.vehicle);
               rMesh.root.userData.vehicle = p.vehicle;
+              rMesh.root.position.set(p.x, 0.04, p.z);
+              rMesh.root.rotation.y = p.heading;
               const tag = makeNametagSprite(p.name, !!p.isNpc);
               rMesh.root.add(tag);
               nametagSpritesRef.current.set(p.id, tag);
@@ -878,12 +924,14 @@ export default function App() {
             setNearbyPickup(null);
           }
           if (msg.type === 'WORLD_WEAPON_COLLECTED') {
+            if (autoPickupSentRef.current === msg.pickupId) autoPickupSentRef.current = null;
             if (msg.collectorId === playerIdRef.current) {
               if (msg.inventory) setWeaponInventory(msg.inventory);
               setEquippedWeapon(msg.weapon);
               setAmmo(msg.ammo);
               const wCfg = WEAPON_CONFIGS[msg.weapon as WeaponType];
-              showToast(`Picked up ${wCfg?.icon || ''} ${wCfg?.name || msg.weapon}`);
+              showToast(`WEAPON COLLECTED: ${(wCfg?.name || msg.weapon).toUpperCase()}`);
+              playCratePickupFX();
             }
           }
         } else if (msg.type === 'WEAPON_ACQUIRED') {
@@ -894,12 +942,27 @@ export default function App() {
           const wCfg = WEAPON_CONFIGS[msg.weapon as WeaponType];
           showToast(`📦 Acquired: ${wCfg?.icon} ${wCfg?.name} (${msg.ammo}x)`);
         } else if (msg.type === 'WEAPON_FIRED') {
-          if (msg.ownerId === playerIdRef.current) {
-            const fired = msg.weaponType as WeaponType;
+          const fired = msg.weaponType as WeaponType;
+          const ownerBundle =
+            msg.ownerId === playerIdRef.current
+              ? localVehicleBundleRef.current
+              : remoteVehicleBundlesRef.current.get(msg.ownerId);
+          const fx = arenaManagerRef.current;
+          if (fired === 'pistol' || fired === 'rifle' || fired === 'shotgun' || fired === 'machinegun') {
+            playMachineGunFX();
+            fx?.triggerMuzzleFlash(msg.x, msg.z, msg.heading, fired);
+            const held = ownerBundle?.root.userData.heldMesh as THREE.Object3D | undefined;
+            if (held) held.userData.kick = 0.18;
+          } else if (fired === 'bat' || fired === 'pipe') {
+            playCrashFX();
+            fx?.triggerMeleeArc(msg.x, msg.z, msg.heading, fired);
+            const held = ownerBundle?.root.userData.heldMesh as THREE.Object3D | undefined;
+            if (held) held.userData.swing = 0.01;
+          } else if (fired === 'kangri') {
+            playFirecrackerFX();
+            fx?.triggerKangriBurstFX(msg.x, msg.z);
+          } else if (msg.ownerId === playerIdRef.current) {
             switch (fired) {
-              case 'machinegun':
-                playMachineGunFX();
-                break;
               case 'rocket':
               case 'homing':
                 playRocketLaunchFX();
@@ -917,23 +980,12 @@ export default function App() {
               case 'spike':
                 playHazardDropFX(fired);
                 break;
-              case 'kangri':
-                playFirecrackerFX();
-                break;
-              case 'pistol':
-              case 'rifle':
-              case 'shotgun':
-                playMachineGunFX();
-                break;
-              case 'bat':
-              case 'pipe':
-                playCrashFX();
-                break;
             }
           }
         } else if (msg.type === 'DAMAGE_EVENT') {
           const ev: DamageEvent = msg.event;
           arenaManagerRef.current?.triggerDamageNumberFX(ev);
+          arenaManagerRef.current?.triggerImpactSparks(ev.x, ev.z);
 
           if (ev.victimId === playerIdRef.current) {
             setRedHitFlash(true);
@@ -1146,13 +1198,23 @@ export default function App() {
           }
         }
 
-        // Collision with other vehicles
-        for (const [, target] of remoteTargetsRef.current.entries()) {
-          const dx = loc.x - target.x;
-          const dz = loc.z - target.z;
+        // Collision with visible vehicles only (skip dead, hidden, and idle arena bots).
+        const matchLive =
+          matchStateRef.current.state === 'active' || matchStateRef.current.state === 'countdown';
+        for (const [rId, target] of remoteTargetsRef.current.entries()) {
+          if (target.isAlive === false) continue;
+          const arenaIdle =
+            !!target.isNpc && target.mode === 'battle_arena' && !matchLive && gameModeRef.current === 'free_roam';
+          if (arenaIdle) continue;
+          const bundle = remoteVehicleBundlesRef.current.get(rId);
+          if (!bundle || !bundle.root.visible) continue;
+          const ox = bundle.root.position.x;
+          const oz = bundle.root.position.z;
+          const dx = loc.x - ox;
+          const dz = loc.z - oz;
           const dist = Math.hypot(dx, dz);
-          const collisionRadius = 2.8;
-          if (dist < collisionRadius) {
+          const collisionRadius = target.vehicle === 'bike' ? 1.7 : 2.35;
+          if (dist < collisionRadius && dist > 0.05) {
             reportClash(`${target.name || 'Vehicle'}`);
             const pushDir = Math.atan2(dx, dz);
             loc.x += Math.sin(pushDir) * (collisionRadius - dist) * 0.7;
@@ -1187,6 +1249,8 @@ export default function App() {
             bundle.lightBar.children[2].visible = !strobe;
           }
           ensureHeldWeapon(bundle, equippedWeaponRef.current);
+          const held = bundle.root.userData.heldMesh as THREE.Object3D | undefined;
+          if (held) animateHeldWeapon(held, dt);
         }
 
         // 20 Hz WebSocket Input Transmission
@@ -1223,9 +1287,17 @@ export default function App() {
           for (const w of bundle.wheels) {
             w.rotation.x += (target.speed / 0.3) * dt;
           }
-          // Hide eliminated players
-          bundle.root.visible = target.isAlive !== false;
+          const matchLive =
+            matchStateRef.current.state === 'active' || matchStateRef.current.state === 'countdown';
+          const hideArenaIdle =
+            gameModeRef.current === 'free_roam' &&
+            target.mode === 'battle_arena' &&
+            !!target.isNpc &&
+            !matchLive;
+          bundle.root.visible = target.isAlive !== false && !hideArenaIdle;
           ensureHeldWeapon(bundle, target.weapon || null);
+          const held = bundle.root.userData.heldMesh as THREE.Object3D | undefined;
+          if (held) animateHeldWeapon(held, dt);
         }
       }
 
@@ -1260,8 +1332,9 @@ export default function App() {
       }
 
       let closest: WorldWeaponPickup | null = null;
-      let closestD = 5.2 * 5.2;
+      let closestD = 8.5 * 8.5;
       for (const p of livePickups) {
+        if (p.active === false) continue;
         const dx = p.x - loc.x;
         const dz = p.z - loc.z;
         const d2 = dx * dx + dz * dz;
@@ -1273,6 +1346,15 @@ export default function App() {
       if (nearbyPickupRef.current?.id !== closest?.id) {
         nearbyPickupRef.current = closest;
         setNearbyPickup(closest);
+      }
+      const nowMs = performance.now();
+      if (closest && closestD <= 8 * 8) {
+        const due = autoPickupSentRef.current !== closest.id || nowMs - (autoPickupAtRef.current || 0) > 120;
+        if (due && ws.readyState === WebSocket.OPEN) {
+          autoPickupSentRef.current = closest.id;
+          autoPickupAtRef.current = nowMs;
+          ws.send(JSON.stringify({ type: 'PICKUP_WEAPON', pickupId: closest.id, x: loc.x, z: loc.z }));
+        }
       }
 
       // Active Mission Checkpoint Detection (in Free Roam)
@@ -1860,22 +1942,16 @@ export default function App() {
           )}
 
           {nearbyPickup && gameMode === 'free_roam' && (
-            <div className="absolute bottom-36 left-1/2 -translate-x-1/2 z-30 px-6 py-3 bg-slate-950/95 border border-amber-400/80 rounded-2xl shadow-2xl text-center font-['Outfit'] pointer-events-auto">
+            <div className="absolute bottom-36 left-1/2 -translate-x-1/2 z-30 px-6 py-3 bg-slate-950/95 border border-amber-400/80 rounded-2xl shadow-2xl text-center font-['Outfit'] pointer-events-none">
               <div className="text-amber-300 text-lg font-black tracking-wide">
-                PRESS E TO PICK UP
+                DRIVE OVER TO COLLECT
               </div>
               <div className="text-white text-sm font-bold">
                 {WEAPON_CONFIGS[nearbyPickup.weapon].icon} {WEAPON_CONFIGS[nearbyPickup.weapon].name}
               </div>
-              <div className="text-[11px] text-slate-300 max-w-xs mb-2">
+              <div className="text-[11px] text-slate-300 max-w-xs">
                 {WEAPON_CONFIGS[nearbyPickup.weapon].description}
               </div>
-              <button
-                onClick={() => collectNearbyPickup(nearbyPickup.id)}
-                className="px-4 py-1.5 rounded-lg bg-amber-500 text-slate-950 text-xs font-black"
-              >
-                PICK UP
-              </button>
             </div>
           )}
 
@@ -2041,7 +2117,7 @@ export default function App() {
                       {currentWeaponDef ? currentWeaponDef.name : 'Collect a pickup'}
                     </div>
                     <div className="text-[11px] font-mono text-cyan-400">
-                      {currentWeaponDef ? `AMMO ${ammo} · SPACE to fire` : 'Drive near a glowing pickup'}
+                      {currentWeaponDef ? `AMMO ${ammo} · SPACE to fire` : 'Drive over a weapon on the road'}
                     </div>
                   </div>
                   <button

@@ -24,6 +24,9 @@ export interface ArenaManager {
   triggerExplosionFX: (x: number, z: number, weaponType: WeaponType, radius?: number) => void;
   triggerEmpShockwaveFX: (x: number, z: number, radius: number) => void;
   triggerKangriBurstFX: (x: number, z: number) => void;
+  triggerMuzzleFlash: (x: number, z: number, heading: number, weaponType: WeaponType) => void;
+  triggerMeleeArc: (x: number, z: number, heading: number, weaponType: WeaponType) => void;
+  triggerImpactSparks: (x: number, z: number) => void;
   triggerDamageNumberFX: (event: DamageEvent) => void;
   dispose: () => void;
 }
@@ -529,6 +532,99 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
     });
   }
 
+  function triggerMuzzleFlash(x: number, z: number, heading: number, weaponType: WeaponType) {
+    const g = new THREE.Group();
+    const fx = Math.sin(heading);
+    const fz = Math.cos(heading);
+    g.position.set(x + fx * 1.6, 1.05, z + fz * 1.6);
+    scene.add(g);
+    const size = weaponType === 'shotgun' ? 0.55 : weaponType === 'rifle' ? 0.38 : 0.28;
+    const flashMat = new THREE.MeshBasicMaterial({ color: 0xfff3c4, transparent: true, opacity: 0.95 });
+    const flash = new THREE.Mesh(new THREE.SphereGeometry(size, 8, 6), flashMat);
+    const cone = new THREE.Mesh(
+      new THREE.ConeGeometry(size * 0.7, size * 2.2, 8),
+      new THREE.MeshBasicMaterial({ color: 0xfb923c, transparent: true, opacity: 0.85 })
+    );
+    cone.rotation.x = Math.PI / 2;
+    cone.rotation.y = heading;
+    g.add(flash, cone);
+    let age = 0;
+    activeEffects.push({
+      group: g,
+      update: dt => {
+        age += dt;
+        const t = age / 0.08;
+        flash.scale.setScalar(1 + t * 1.8);
+        flashMat.opacity = Math.max(0, 0.95 * (1 - t));
+        if (age >= 0.09) {
+          scene.remove(g);
+          return true;
+        }
+        return false;
+      },
+    });
+  }
+
+  function triggerMeleeArc(x: number, z: number, heading: number, weaponType: WeaponType) {
+    const g = new THREE.Group();
+    g.position.set(x, 0.9, z);
+    g.rotation.y = heading;
+    scene.add(g);
+    const color = weaponType === 'pipe' ? 0xcbd5e1 : 0xc4a484;
+    const arc = new THREE.Mesh(
+      new THREE.TorusGeometry(1.6, 0.07, 6, 14, Math.PI * 0.7),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 })
+    );
+    arc.rotation.x = Math.PI / 2;
+    g.add(arc);
+    let age = 0;
+    activeEffects.push({
+      group: g,
+      update: dt => {
+        age += dt;
+        arc.rotation.z += dt * 8;
+        (arc.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.85 * (1 - age / 0.22));
+        if (age >= 0.22) {
+          scene.remove(g);
+          return true;
+        }
+        return false;
+      },
+    });
+  }
+
+  function triggerImpactSparks(x: number, z: number) {
+    const g = new THREE.Group();
+    g.position.set(x, 0.7, z);
+    scene.add(g);
+    const sparks: THREE.Mesh[] = [];
+    for (let i = 0; i < 8; i++) {
+      const s = new THREE.Mesh(
+        new THREE.SphereGeometry(0.05, 4, 4),
+        new THREE.MeshBasicMaterial({ color: i % 2 ? 0xfde047 : 0xf97316 })
+      );
+      s.userData.v = new THREE.Vector3((Math.random() - 0.5) * 6, 2 + Math.random() * 3, (Math.random() - 0.5) * 6);
+      g.add(s);
+      sparks.push(s);
+    }
+    let age = 0;
+    activeEffects.push({
+      group: g,
+      update: dt => {
+        age += dt;
+        sparks.forEach(s => {
+          s.position.addScaledVector(s.userData.v, dt);
+          s.userData.v.y -= 12 * dt;
+        });
+        if (age >= 0.28) {
+          scene.remove(g);
+          return true;
+        }
+        return false;
+      },
+    });
+  }
+
   // --------------------------------------------------------------------------
   // Floating Damage Numbers FX
   // --------------------------------------------------------------------------
@@ -706,6 +802,9 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
     triggerExplosionFX,
     triggerEmpShockwaveFX,
     triggerKangriBurstFX,
+    triggerMuzzleFlash,
+    triggerMeleeArc,
+    triggerImpactSparks,
     triggerDamageNumberFX,
     dispose,
   };
