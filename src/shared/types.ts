@@ -429,6 +429,23 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponDefinition> = {
   },
 };
 
+export const VEHICLE_DAMAGE_MULT: Record<WeaponType, number> = {
+  pistol: 0.55,
+  shotgun: 0.85,
+  rifle: 0.65,
+  bat: 0.7,
+  pipe: 0.9,
+  kangri: 1.05,
+  machinegun: 0.5,
+  rocket: 1.35,
+  grenade: 1.2,
+  firecracker: 0.75,
+  emp: 0.15,
+  oil: 0,
+  spike: 0.45,
+  homing: 1.4,
+};
+
 export interface WorldWeaponPickup {
   id: string;
   slot: number;
@@ -508,6 +525,7 @@ export interface ArenaHazardState {
 export interface PlayerCombatState {
   health: number; // 0 - 100
   maxHealth: number; // 100
+  vehicleHealth: number; // 0 - 100 vehicle hull, shares damage with driver
   shield: number; // 0 - 50 bonus absorption
   weapon: WeaponType | null;
   ammo: number;

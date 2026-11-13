@@ -13,6 +13,7 @@ import {
   GameMode,
   WeaponType,
   WEAPON_CONFIGS,
+  VEHICLE_DAMAGE_MULT,
   WEAPON_SLOT_ORDER,
   ArenaCrateState,
   ArenaProjectileState,
@@ -105,6 +106,7 @@ export class RoomManager {
     return {
       health: 100,
       maxHealth: 100,
+      vehicleHealth: 100,
       shield: 0,
       weapon: null,
       ammo: 0,
@@ -113,7 +115,7 @@ export class RoomManager {
       deaths: 0,
       damageDealt: 0,
       isAlive: true,
-      invulnerableUntil: Date.now() + 3500,
+      invulnerableUntil: 0,
       empUntil: 0,
       oilUntil: 0,
       speedPenaltyUntil: 0,
@@ -437,7 +439,13 @@ export class RoomManager {
             case 'FIRE_WEAPON': {
               if (!clientSessionId) return;
               const client = this.clients.get(clientSessionId);
-              this.tryFireWeapon(client);
+              if (!client) return;
+              const shot = {
+                x: Number.isFinite(Number(msg.x)) ? Number(msg.x) : client.state.x,
+                z: Number.isFinite(Number(msg.z)) ? Number(msg.z) : client.state.z,
+                heading: Number.isFinite(Number(msg.heading)) ? Number(msg.heading) : client.state.heading,
+              };
+              this.tryFireWeapon(client, shot);
               break;
             }
 
@@ -721,7 +729,10 @@ export class RoomManager {
     return rows;
   }
 
-  private tryFireWeapon(client: ConnectedClient | undefined) {
+  private tryFireWeapon(
+    client: ConnectedClient | undefined,
+    shot?: { x: number; z: number; heading: number }
+  ) {
     if (!client || !client.combat.isAlive) return;
     if (client.mode === 'battle_arena') {
       if (!client.inMatch || this.matchState.state !== 'active') return;
@@ -756,7 +767,13 @@ export class RoomManager {
       client.combat.ammo = next ? client.combat.inventory[next] || 0 : 0;
     }
     client.state.combat = client.combat;
-    this.handleWeaponFire(client, wType);
+    this.handleWeaponFire(
+      client,
+      wType,
+      shot?.x ?? client.state.x,
+      shot?.z ?? client.state.z,
+      shot?.heading ?? client.state.heading
+    );
   }
 
   private dropStaleSessions() {
@@ -778,6 +795,7 @@ export class RoomManager {
   private resetPlayerCombat(client: ConnectedClient, resetStats: boolean) {
     client.combat.health = 100;
     client.combat.maxHealth = 100;
+    client.combat.vehicleHealth = 100;
     client.combat.shield = 25;
     client.combat.weapon = null;
     client.combat.ammo = 0;
@@ -838,6 +856,7 @@ export class RoomManager {
       b.state.speed = 0;
       b.combat.health = 100;
       b.combat.maxHealth = 100;
+      b.combat.vehicleHealth = 100;
       b.combat.shield = 25;
       b.combat.weapon = 'machinegun';
       b.combat.ammo = 18;
@@ -1143,6 +1162,9 @@ export class RoomManager {
       if (dot < 0.2) continue;
       const scaled = Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
       this.dealDamageToPlayer(c, scaled, attackerId, attackerName, wType, c.state.x, c.state.z);
+      if (wType === 'kangri') {
+        c.combat.speedPenaltyUntil = Date.now() + 2200;
+      }
     }
     for (const b of this.arenaBots.values()) {
       if (!b.combat.isAlive || b.state.id === attackerId) continue;
@@ -1154,6 +1176,9 @@ export class RoomManager {
       if (dot < 0.2) continue;
       const scaled = Math.round(damage * (0.55 + 0.45 * (1 - dist / range)));
       this.dealDamageToBot(b, scaled, attackerId, attackerName, wType, b.state.x, b.state.z);
+      if (wType === 'kangri') {
+        b.combat.speedPenaltyUntil = Date.now() + 2200;
+      }
     }
     for (const bot of this.bots.values()) {
       if (!bot.combat?.isAlive || bot.id === attackerId) continue;
@@ -1172,9 +1197,13 @@ export class RoomManager {
     if (!bot.combat) bot.combat = this.createCombatState();
     if (Date.now() < bot.combat.invulnerableUntil) return;
     bot.combat.health = Math.max(0, bot.combat.health - amount);
+    bot.combat.vehicleHealth = Math.max(
+      0,
+      (bot.combat.vehicleHealth ?? 100) - Math.round(amount * (VEHICLE_DAMAGE_MULT[wType] ?? 1))
+    );
     const attacker = this.clients.get(attackerId);
     if (attacker) attacker.combat.damageDealt += amount;
-    const dead = bot.combat.health <= 0;
+    const dead = bot.combat.health <= 0 || bot.combat.vehicleHealth <= 0;
     this.broadcast({
       type: 'DAMAGE_EVENT',
       event: {
@@ -1211,23 +1240,102 @@ export class RoomManager {
     }
   }
 
-  private handleWeaponFire(attacker: ConnectedClient, wType: WeaponType) {
+  private applyHitscan(
+    attackerId: string,
+    attackerName: string,
+    x: number,
+    z: number,
+    heading: number,
+    range: number,
+    damage: number,
+    wType: WeaponType,
+    radius = 3.2
+  ) {
+    const fx = Math.sin(heading);
+    const fz = Math.cos(heading);
+    let bestDist = range;
+    let hitPlayer: ConnectedClient | undefined;
+    let hitArena: { state: PlayerServerState; combat: PlayerCombatState } | undefined;
+    let hitRoad: PlayerServerState | undefined;
+
+    for (const c of this.clients.values()) {
+      if (c.playerId === attackerId || !c.combat.isAlive) continue;
+      const dx = c.state.x - x;
+      const dz = c.state.z - z;
+      const along = dx * fx + dz * fz;
+      if (along < 0.6 || along > range) continue;
+      const perp = Math.abs(dx * fz - dz * fx);
+      if (perp > radius) continue;
+      if (along < bestDist) {
+        bestDist = along;
+        hitPlayer = c;
+        hitArena = undefined;
+        hitRoad = undefined;
+      }
+    }
+    for (const b of this.arenaBots.values()) {
+      if (!b.combat.isAlive || b.state.id === attackerId) continue;
+      const dx = b.state.x - x;
+      const dz = b.state.z - z;
+      const along = dx * fx + dz * fz;
+      if (along < 0.6 || along > range) continue;
+      const perp = Math.abs(dx * fz - dz * fx);
+      if (perp > radius) continue;
+      if (along < bestDist) {
+        bestDist = along;
+        hitPlayer = undefined;
+        hitArena = b;
+        hitRoad = undefined;
+      }
+    }
+    for (const bot of this.bots.values()) {
+      if (!bot.combat?.isAlive || bot.id === attackerId) continue;
+      const dx = bot.x - x;
+      const dz = bot.z - z;
+      const along = dx * fx + dz * fz;
+      if (along < 0.6 || along > range) continue;
+      const perp = Math.abs(dx * fz - dz * fx);
+      if (perp > radius) continue;
+      if (along < bestDist) {
+        bestDist = along;
+        hitPlayer = undefined;
+        hitArena = undefined;
+        hitRoad = bot;
+      }
+    }
+
+    if (hitPlayer) {
+      this.dealDamageToPlayer(hitPlayer, damage, attackerId, attackerName, wType, hitPlayer.state.x, hitPlayer.state.z);
+    } else if (hitArena) {
+      this.dealDamageToBot(hitArena, damage, attackerId, attackerName, wType, hitArena.state.x, hitArena.state.z);
+    } else if (hitRoad) {
+      this.hurtRoadBot(hitRoad, damage, attackerId, attackerName, wType);
+    }
+  }
+
+  private handleWeaponFire(
+    attacker: ConnectedClient,
+    wType: WeaponType,
+    originX: number,
+    originZ: number,
+    heading: number
+  ) {
     const now = Date.now();
-    const forwardX = Math.sin(attacker.state.heading);
-    const forwardZ = Math.cos(attacker.state.heading);
-    const muzzleX = attacker.state.x + forwardX * 2.2;
-    const muzzleZ = attacker.state.z + forwardZ * 2.2;
+    const forwardX = Math.sin(heading);
+    const forwardZ = Math.cos(heading);
+    const muzzleX = originX + forwardX * 2.2;
+    const muzzleZ = originZ + forwardZ * 2.2;
 
     switch (wType) {
       case 'bat':
       case 'pipe': {
-        const range = WEAPON_CONFIGS[wType].range || 3.4;
-        this.applyForwardCone(attacker.playerId, attacker.name, attacker.state.x, attacker.state.z, attacker.state.heading, range, WEAPON_CONFIGS[wType].damage, wType);
+        const range = (WEAPON_CONFIGS[wType].range || 3.4) + 1.2;
+        this.applyForwardCone(attacker.playerId, attacker.name, originX, originZ, heading, range, WEAPON_CONFIGS[wType].damage, wType);
         break;
       }
       case 'kangri': {
-        const range = WEAPON_CONFIGS.kangri.range || 5.2;
-        this.applyForwardCone(attacker.playerId, attacker.name, attacker.state.x, attacker.state.z, attacker.state.heading, range, WEAPON_CONFIGS.kangri.damage, wType);
+        const range = (WEAPON_CONFIGS.kangri.range || 5.2) + 1.4;
+        this.applyForwardCone(attacker.playerId, attacker.name, originX, originZ, heading, range, WEAPON_CONFIGS.kangri.damage, wType);
         this.broadcast({
           type: 'COMBAT_EFFECT',
           effect: 'kangri_burst',
@@ -1240,7 +1348,19 @@ export class RoomManager {
       }
       case 'pistol':
       case 'rifle': {
-        const spd = WEAPON_CONFIGS[wType].projectileSpeed;
+        const cfg = WEAPON_CONFIGS[wType];
+        this.applyHitscan(
+          attacker.playerId,
+          attacker.name,
+          originX,
+          originZ,
+          heading,
+          cfg.range || 28,
+          cfg.damage,
+          wType,
+          wType === 'rifle' ? 2.6 : 3.0
+        );
+        const spd = cfg.projectileSpeed;
         const id = `proj_${now}_${Math.random().toString(36).substring(2, 6)}`;
         this.projectiles.set(id, {
           id,
@@ -1253,16 +1373,27 @@ export class RoomManager {
           vx: forwardX * spd,
           vy: 0,
           vz: forwardZ * spd,
-          heading: attacker.state.heading,
+          heading,
           spawnTime: now,
           lifeTimeSec: wType === 'rifle' ? 1.1 : 0.7,
         });
         break;
       }
       case 'shotgun': {
+        this.applyHitscan(
+          attacker.playerId,
+          attacker.name,
+          originX,
+          originZ,
+          heading,
+          WEAPON_CONFIGS.shotgun.range || 16,
+          WEAPON_CONFIGS.shotgun.damage,
+          'shotgun',
+          4.4
+        );
         const spread = [-0.18, -0.06, 0.06, 0.18];
         spread.forEach((ang, idx) => {
-          const h = attacker.state.heading + ang;
+          const h = heading + ang;
           const id = `proj_${now}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
           this.projectiles.set(id, {
             id,
@@ -1283,6 +1414,17 @@ export class RoomManager {
         break;
       }
       case 'machinegun': {
+        this.applyHitscan(
+          attacker.playerId,
+          attacker.name,
+          originX,
+          originZ,
+          heading,
+          38,
+          WEAPON_CONFIGS.machinegun.damage,
+          'machinegun',
+          2.8
+        );
         const id = `proj_${now}_${Math.random().toString(36).substring(2, 6)}`;
         const proj: ArenaProjectileState = {
           id,
@@ -1295,7 +1437,7 @@ export class RoomManager {
           vx: forwardX * 95.0,
           vy: 0,
           vz: forwardZ * 95.0,
-          heading: attacker.state.heading,
+          heading,
           spawnTime: now,
           lifeTimeSec: 0.75,
         };
@@ -1316,7 +1458,7 @@ export class RoomManager {
           vx: forwardX * 48.0,
           vy: 0,
           vz: forwardZ * 48.0,
-          heading: attacker.state.heading,
+          heading,
           spawnTime: now,
           lifeTimeSec: 2.5,
         };
@@ -1337,7 +1479,7 @@ export class RoomManager {
           vx: forwardX * 30.0,
           vy: 6.5,
           vz: forwardZ * 30.0,
-          heading: attacker.state.heading,
+          heading,
           spawnTime: now,
           lifeTimeSec: 1.8,
         };
@@ -1349,7 +1491,7 @@ export class RoomManager {
         // 5 spread rockets
         const spreadAngles = [-0.3, -0.15, 0, 0.15, 0.3];
         spreadAngles.forEach((ang, idx) => {
-          const h = attacker.state.heading + ang;
+          const h = heading + ang;
           const id = `proj_${now}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
           const proj: ArenaProjectileState = {
             id,
@@ -1374,17 +1516,17 @@ export class RoomManager {
       case 'emp': {
         // Instant area disabler dome
         const empRadius = 14.0;
-        this.broadcast({
-          type: 'COMBAT_EFFECT',
-          effect: 'emp_shockwave',
-          playerId: attacker.playerId,
-          x: attacker.state.x,
-          z: attacker.state.z,
-          radius: empRadius,
-        });
+    this.broadcast({
+      type: 'COMBAT_EFFECT',
+      effect: 'emp_shockwave',
+      playerId: attacker.playerId,
+      x: originX,
+      z: originZ,
+      radius: empRadius,
+    });
 
         // Apply EMP disable to nearby opponents
-        this.applyEmpEffect(attacker.playerId, attacker.state.x, attacker.state.z, empRadius);
+        this.applyEmpEffect(attacker.playerId, originX, originZ, empRadius);
         break;
       }
 
@@ -1394,9 +1536,9 @@ export class RoomManager {
           id,
           type: 'oil',
           ownerId: attacker.playerId,
-          x: attacker.state.x - forwardX * 2.2,
-          z: attacker.state.z - forwardZ * 2.2,
-          heading: attacker.state.heading,
+          x: originX - forwardX * 2.2,
+          z: originZ - forwardZ * 2.2,
+          heading,
           expiresAt: now + 15000,
         };
         this.hazards.set(id, haz);
@@ -1409,9 +1551,9 @@ export class RoomManager {
           id,
           type: 'spike',
           ownerId: attacker.playerId,
-          x: attacker.state.x - forwardX * 2.0,
-          z: attacker.state.z - forwardZ * 2.0,
-          heading: attacker.state.heading,
+          x: originX - forwardX * 2.0,
+          z: originZ - forwardZ * 2.0,
+          heading,
           expiresAt: now + 16000,
         };
         this.hazards.set(id, haz);
@@ -1426,8 +1568,8 @@ export class RoomManager {
         // Check human clients
         for (const c of this.clients.values()) {
           if (c.playerId === attacker.playerId || !c.inMatch || !c.combat.isAlive) continue;
-          const dx = c.state.x - attacker.state.x;
-          const dz = c.state.z - attacker.state.z;
+          const dx = c.state.x - originX;
+          const dz = c.state.z - originZ;
           const dist = Math.sqrt(dx * dx + dz * dz);
           if (dist < bestDist) {
             // Forward dot check
@@ -1443,8 +1585,8 @@ export class RoomManager {
         if (!targetId) {
           for (const b of this.arenaBots.values()) {
             if (!b.combat.isAlive) continue;
-            const dx = b.state.x - attacker.state.x;
-            const dz = b.state.z - attacker.state.z;
+            const dx = b.state.x - originX;
+            const dz = b.state.z - originZ;
             const dist = Math.sqrt(dx * dx + dz * dz);
             if (dist < bestDist) {
               const dot = (dx * forwardX + dz * forwardZ) / dist;
@@ -1468,7 +1610,7 @@ export class RoomManager {
           vx: forwardX * 38.0,
           vy: 0,
           vz: forwardZ * 38.0,
-          heading: attacker.state.heading,
+          heading,
           targetId,
           spawnTime: now,
           lifeTimeSec: 4.2,
@@ -1495,7 +1637,7 @@ export class RoomManager {
       weaponType: wType,
       x: muzzleX,
       z: muzzleZ,
-      heading: attacker.state.heading,
+      heading,
     });
   }
 
@@ -1955,12 +2097,15 @@ export class RoomManager {
       p.x += p.vx * dt;
       p.z += p.vz * dt;
 
-      // Arena boundary collision for heavy explosives
       if (
-        p.x < ARENA_BOUNDS.MIN_X ||
-        p.x > ARENA_BOUNDS.MAX_X ||
-        p.z < ARENA_BOUNDS.MIN_Z ||
-        p.z > ARENA_BOUNDS.MAX_Z
+        (p.weaponType === 'rocket' ||
+          p.weaponType === 'grenade' ||
+          p.weaponType === 'homing' ||
+          p.weaponType === 'firecracker') &&
+        (p.x < ARENA_BOUNDS.MIN_X ||
+          p.x > ARENA_BOUNDS.MAX_X ||
+          p.z < ARENA_BOUNDS.MIN_Z ||
+          p.z > ARENA_BOUNDS.MAX_Z)
       ) {
         expiredProjectiles.push(pId);
         if (p.weaponType === 'rocket' || p.weaponType === 'grenade' || p.weaponType === 'homing') {
@@ -1969,6 +2114,13 @@ export class RoomManager {
         continue;
       }
 
+      const hitscanVisual =
+        p.weaponType === 'pistol' ||
+        p.weaponType === 'rifle' ||
+        p.weaponType === 'shotgun' ||
+        p.weaponType === 'machinegun';
+      if (hitscanVisual) continue;
+
       // Check collision with human players
       let hit = false;
       for (const c of this.clients.values()) {
@@ -1976,7 +2128,7 @@ export class RoomManager {
         if (c.mode === 'battle_arena' && !c.inMatch) continue;
         const dx = c.state.x - p.x;
         const dz = c.state.z - p.z;
-        if (dx * dx + dz * dz < 2.0 * 2.0) {
+        if (dx * dx + dz * dz < 3.4 * 3.4) {
           this.applyDirectHit(c, p);
           hit = true;
           break;
@@ -1989,7 +2141,7 @@ export class RoomManager {
           if (b.state.id === p.ownerId || !b.combat.isAlive) continue;
           const dx = b.state.x - p.x;
           const dz = b.state.z - p.z;
-          if (dx * dx + dz * dz < 2.0 * 2.0) {
+          if (dx * dx + dz * dz < 3.4 * 3.4) {
             this.applyDirectHitBot(b, p);
             hit = true;
             break;
@@ -2002,7 +2154,7 @@ export class RoomManager {
           if (bot.id === p.ownerId || !bot.combat?.isAlive) continue;
           const dx = bot.x - p.x;
           const dz = bot.z - p.z;
-          if (dx * dx + dz * dz < 2.0 * 2.0) {
+          if (dx * dx + dz * dz < 3.4 * 3.4) {
             this.hurtRoadBot(bot, WEAPON_CONFIGS[p.weaponType].damage, p.ownerId, p.ownerName, p.weaponType);
             hit = true;
             break;
@@ -2108,7 +2260,9 @@ export class RoomManager {
     }
 
     victim.combat.health = Math.max(0, victim.combat.health - dmgRemaining);
-    const isElim = victim.combat.health <= 0;
+    const hull = Math.round(amount * (VEHICLE_DAMAGE_MULT[wType] ?? 1));
+    victim.combat.vehicleHealth = Math.max(0, (victim.combat.vehicleHealth ?? 100) - hull);
+    const isElim = victim.combat.health <= 0 || victim.combat.vehicleHealth <= 0;
 
     // Credit attacker
     const attacker = this.clients.get(attackerId);
@@ -2152,6 +2306,19 @@ export class RoomManager {
         announcement: 'PLAYER ELIMINATED',
       });
       this.updateArenaPlayerCounts();
+      if (victim.mode !== 'battle_arena') {
+        const pid = victim.playerId;
+        setTimeout(() => {
+          const live = this.clients.get(pid);
+          if (!live) return;
+          live.combat.health = 100;
+          live.combat.vehicleHealth = 100;
+          live.combat.shield = 0;
+          live.combat.isAlive = true;
+          live.combat.invulnerableUntil = Date.now() + 1500;
+          live.state.combat = live.combat;
+        }, 4000);
+      }
     }
   }
 
@@ -2180,7 +2347,9 @@ export class RoomManager {
     }
 
     victim.combat.health = Math.max(0, victim.combat.health - dmgRemaining);
-    const isElim = victim.combat.health <= 0;
+    const hull = Math.round(amount * (VEHICLE_DAMAGE_MULT[wType] ?? 1));
+    victim.combat.vehicleHealth = Math.max(0, (victim.combat.vehicleHealth ?? 100) - hull);
+    const isElim = victim.combat.health <= 0 || victim.combat.vehicleHealth <= 0;
 
     const attacker = this.clients.get(attackerId);
     if (attacker) {

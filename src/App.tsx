@@ -223,6 +223,7 @@ export default function App() {
   const gameModeRef = useRef<GameMode>('free_roam');
 
   const [playerHealth, setPlayerHealth] = useState(100);
+  const [playerVehicleHealth, setPlayerVehicleHealth] = useState(100);
   const [playerShield, setPlayerShield] = useState(0);
   const [equippedWeapon, setEquippedWeapon] = useState<WeaponType | null>(null);
   const [ammo, setAmmo] = useState(0);
@@ -399,24 +400,54 @@ export default function App() {
     }
   }, [weaponInventory]);
 
+  const isAliveRef = useRef(true);
+  const ammoRef = useRef(0);
+  const fireWeaponRef = useRef<() => void>(() => undefined);
+  const isAimingRef = useRef(false);
+  const aimYawRef = useRef(0);
+  const empUntilRef = useRef(0);
+  const oilUntilRef = useRef(0);
+  const speedPenaltyRef = useRef(0);
+  const [isAiming, setIsAiming] = useState(false);
+
   const fireWeapon = useCallback(() => {
-    if (!isAlive) return;
-    if (!equippedWeapon || ammo <= 0) return;
+    if (!isAliveRef.current) return;
+    const wType = equippedWeaponRef.current;
+    if (!wType || ammoRef.current <= 0) return;
 
     const now = Date.now();
-    const wCfg = WEAPON_CONFIGS[equippedWeapon];
+    const wCfg = WEAPON_CONFIGS[wType];
     if (now - lastFireTimeRef.current < wCfg.cooldownMs) return;
     lastFireTimeRef.current = now;
     setWeaponCooldownMs(wCfg.cooldownMs);
 
+    const loc = localStateRef.current;
+    const heading = loc.heading + aimYawRef.current;
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'FIRE_WEAPON' }));
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'FIRE_WEAPON',
+          x: loc.x,
+          z: loc.z,
+          heading,
+          weapon: wType,
+        })
+      );
     }
-  }, [equippedWeapon, ammo, isAlive]);
+  }, []);
 
   useEffect(() => {
     equippedWeaponRef.current = equippedWeapon;
   }, [equippedWeapon]);
+  useEffect(() => {
+    ammoRef.current = ammo;
+  }, [ammo]);
+  useEffect(() => {
+    isAliveRef.current = isAlive;
+  }, [isAlive]);
+  useEffect(() => {
+    fireWeaponRef.current = fireWeapon;
+  }, [fireWeapon]);
 
   useEffect(() => {
     matchStateRef.current = matchState;
@@ -615,7 +646,9 @@ export default function App() {
       if (!isChatOpen && !isInputFocused) {
         if (e.code === 'Space') {
           e.preventDefault();
-          fireWeapon();
+          const armed = equippedWeaponRef.current;
+          if (e.repeat && armed !== 'machinegun') return;
+          fireWeaponRef.current();
         }
         if (e.code === 'KeyE') {
           e.preventDefault();
@@ -676,18 +709,40 @@ export default function App() {
     const onMouseDown = (e: MouseEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'SELECT') return;
-      if (!isChatOpen) {
+      if (e.button === 2) {
+        isAimingRef.current = true;
+        setIsAiming(true);
+        return;
+      }
+      if (e.button === 0 && !isChatOpen) {
         fireWeapon();
       }
     };
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button === 2) {
+        isAimingRef.current = false;
+        setIsAiming(false);
+      }
+    };
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isAimingRef.current) return;
+      aimYawRef.current = Math.max(-0.85, Math.min(0.85, aimYawRef.current - e.movementX * 0.0035));
+    };
+    const onContextMenu = (e: Event) => e.preventDefault();
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('contextmenu', onContextMenu);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('contextmenu', onContextMenu);
     };
   }, [isChatOpen, switchVehicle, fireWeapon, selectWeaponSlot, collectNearbyPickup, useBoost, useDodge, showToast]);
 
@@ -838,6 +893,7 @@ export default function App() {
           const localServerPlayer = players.find(p => p.id === playerIdRef.current);
           if (localServerPlayer?.combat) {
             setPlayerHealth(localServerPlayer.combat.health);
+            setPlayerVehicleHealth(localServerPlayer.combat.vehicleHealth ?? localServerPlayer.combat.health);
             setPlayerShield(localServerPlayer.combat.shield);
             setKills(localServerPlayer.combat.kills);
             setDeaths(localServerPlayer.combat.deaths || 0);
@@ -849,6 +905,9 @@ export default function App() {
             }
             setEquippedWeapon(localServerPlayer.combat.weapon);
             setAmmo(localServerPlayer.combat.ammo);
+            empUntilRef.current = localServerPlayer.combat.empUntil || 0;
+            oilUntilRef.current = localServerPlayer.combat.oilUntil || 0;
+            speedPenaltyRef.current = localServerPlayer.combat.speedPenaltyUntil || 0;
           }
 
           // Remote vehicles
@@ -992,6 +1051,8 @@ export default function App() {
             setTimeout(() => setRedHitFlash(false), 260);
             playCrashFX();
             crashShakeRef.current = 0.55;
+          } else if (ev.attackerId === playerIdRef.current) {
+            showToast(`${ev.isElimination ? 'ELIMINATED' : 'HIT'} ${ev.victimName} −${ev.amount} HP`);
           }
         } else if (msg.type === 'EXPLOSION') {
           playExplosionFX();
@@ -1084,8 +1145,14 @@ export default function App() {
           if (loc.speed > 0.5) accel -= vCfg.brakeForce;
           else accel -= vCfg.acceleration * 0.7; // reverse
         }
-        // In free roam, space is handbrake. In battle arena, space is fire
-        if (space && gameModeRef.current === 'free_roam') {
+        const nowMs = Date.now();
+        if (nowMs < empUntilRef.current) {
+          accel = 0;
+        } else if (nowMs < speedPenaltyRef.current) {
+          accel *= 0.35;
+        }
+
+        if (keys['ControlLeft'] || keys['ControlRight']) {
           accel -= Math.sign(loc.speed) * vCfg.brakeForce * 1.5;
         }
 
@@ -1094,7 +1161,9 @@ export default function App() {
         loc.speed = Math.max(-vCfg.reverseSpeed, Math.min(vCfg.maxSpeed, loc.speed));
 
         // Steering: Left arrow turns left (+heading), Right arrow turns right (-heading)
-        const steerTarget = (lf ? 1 : 0) - (rt ? 1 : 0);
+        let steerTarget = (lf ? 1 : 0) - (rt ? 1 : 0);
+        if (nowMs < empUntilRef.current) steerTarget = 0;
+        if (nowMs < oilUntilRef.current) steerTarget += Math.sin(nowMs * 0.012) * 0.85;
         loc.steerAngle += (steerTarget - loc.steerAngle) * Math.min(1, 14 * dt);
 
         const turnRate = vCfg.turnSpeed * loc.steerAngle * Math.max(-1, Math.min(1, loc.speed / 4.0));
@@ -1102,6 +1171,10 @@ export default function App() {
 
         loc.x += Math.sin(loc.heading) * loc.speed * dt;
         loc.z += Math.cos(loc.heading) * loc.speed * dt;
+
+        if (space && equippedWeaponRef.current === 'machinegun') {
+          fireWeaponRef.current();
+        }
 
         // Collision helper
         const reportClash = (obstacle: string) => {
@@ -1250,7 +1323,13 @@ export default function App() {
           }
           ensureHeldWeapon(bundle, equippedWeaponRef.current);
           const held = bundle.root.userData.heldMesh as THREE.Object3D | undefined;
-          if (held) animateHeldWeapon(held, dt);
+          if (!isAimingRef.current) {
+            aimYawRef.current *= Math.exp(-8 * dt);
+          }
+          if (held) {
+            held.rotation.y += (aimYawRef.current - held.rotation.y) * Math.min(1, 12 * dt);
+            animateHeldWeapon(held, dt);
+          }
         }
 
         // 20 Hz WebSocket Input Transmission
@@ -1264,8 +1343,8 @@ export default function App() {
               steer: loc.steerAngle,
               throttle: up ? 1 : 0,
               brake: dn ? 1 : 0,
-              handbrake: space && gameModeRef.current === 'free_roam' && !equippedWeaponRef.current,
-              fire: space && !isChatOpen,
+              handbrake: !!(keys['ControlLeft'] || keys['ControlRight']),
+              fire: false,
               vehicleType: loc.vehicle,
               clientTime: Date.now(),
             };
@@ -1397,7 +1476,8 @@ export default function App() {
         // 2. Critical-damped rotational follow (heading only):
         // Damping the camera heading rather than Cartesian XYZ position eliminates
         // velocity lag distance completely while preserving smooth turning arcs.
-        let diff = loc.heading - camHeadingRef.current;
+        const aimHeading = loc.heading + aimYawRef.current;
+        let diff = (isAimingRef.current ? aimHeading : loc.heading) - camHeadingRef.current;
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
 
@@ -1733,7 +1813,11 @@ export default function App() {
             <div className="text-xs text-slate-400 flex flex-wrap items-center justify-center gap-3 pt-4 border-t border-slate-800">
               <span><b>WASD / Arrows</b> Drive</span>
               <span>·</span>
-              <span><b>Space</b> Fire Weapon / Handbrake</span>
+              <span><b>Space / FIRE</b> Attack</span>
+              <span>·</span>
+              <span><b>RMB</b> Aim</span>
+              <span>·</span>
+              <span><b>Ctrl</b> Handbrake</span>
               <span>·</span>
               <span><b>Shift</b> Nitro Boost</span>
               <span>·</span>
@@ -1801,6 +1885,7 @@ export default function App() {
                   : 'Disconnected'}
               </span>
               <span className="text-rose-300 font-mono">HP {playerHealth}</span>
+              <span className="text-amber-300 font-mono">VEH {playerVehicleHealth}</span>
             </div>
           </div>
 
@@ -1941,6 +2026,18 @@ export default function App() {
             </div>
           )}
 
+          {isAiming && (
+            <div className="absolute inset-0 z-20 pointer-events-none flex items-center justify-center">
+              <div className="relative w-10 h-10">
+                <div className="absolute left-1/2 top-0 w-[2px] h-3 -translate-x-1/2 bg-amber-300" />
+                <div className="absolute left-1/2 bottom-0 w-[2px] h-3 -translate-x-1/2 bg-amber-300" />
+                <div className="absolute top-1/2 left-0 h-[2px] w-3 -translate-y-1/2 bg-amber-300" />
+                <div className="absolute top-1/2 right-0 h-[2px] w-3 -translate-y-1/2 bg-amber-300" />
+                <div className="absolute left-1/2 top-1/2 w-1.5 h-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-200" />
+              </div>
+            </div>
+          )}
+
           {nearbyPickup && gameMode === 'free_roam' && (
             <div className="absolute bottom-36 left-1/2 -translate-x-1/2 z-30 px-6 py-3 bg-slate-950/95 border border-amber-400/80 rounded-2xl shadow-2xl text-center font-['Outfit'] pointer-events-none">
               <div className="text-amber-300 text-lg font-black tracking-wide">
@@ -1964,6 +2061,27 @@ export default function App() {
               </div>
             </div>
           </div>
+
+          {gameMode === 'free_roam' && (
+            <div className="absolute bottom-28 right-4 z-20 min-w-[210px] p-3 bg-slate-950/90 border border-slate-700/80 rounded-2xl shadow-2xl backdrop-blur-md pointer-events-none">
+              <div className="flex items-center justify-between text-xs font-bold font-['Outfit']">
+                <span className="text-red-400">DRIVER HP {playerHealth}</span>
+                <span className="text-amber-300">VEHICLE {playerVehicleHealth}</span>
+              </div>
+              <div className="h-3 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-700 mt-1">
+                <div
+                  className={`h-full transition-all duration-200 ${
+                    playerVehicleHealth > 50
+                      ? 'bg-gradient-to-r from-emerald-500 to-green-400'
+                      : playerVehicleHealth > 25
+                      ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
+                      : 'bg-gradient-to-r from-red-600 to-rose-500 animate-pulse'
+                  }`}
+                  style={{ width: `${Math.max(0, playerVehicleHealth)}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Bottom Left-Center: Combat Health & Defensive Ability Gauge (Battle Arena) */}
           {gameMode === 'battle_arena' && (
