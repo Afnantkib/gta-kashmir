@@ -64,8 +64,56 @@ function ensureHeldWeapon(bundle: VehicleMeshBundle, weapon: WeaponType | null) 
   mesh.rotation.y = 0;
   mesh.userData.baseRotX = mesh.rotation.x;
   mesh.userData.baseRotZ = mesh.rotation.z;
+  const tips: Partial<Record<WeaponType, [number, number, number]>> = {
+    pistol: [0, 0.24, 0.38],
+    shotgun: [0, 0.22, 0.72],
+    rifle: [0, 0.22, 0.9],
+    machinegun: [0, 0.2, 0.7],
+    rocket: [0, 0.2, 0.85],
+    homing: [0, 0.2, 0.9],
+    grenade: [0, 0.18, 0.45],
+    firecracker: [0, 0.18, 0.55],
+    bat: [0, 1.05, 0],
+    pipe: [0, 1.15, 0],
+    kangri: [0, 0.28, 0.22],
+  };
+  const tip = tips[weapon] || [0, 0.2, 0.5];
+  mesh.userData.muzzleLocal = new THREE.Vector3(tip[0], tip[1], tip[2]);
   bundle.body.add(mesh);
   bundle.root.userData.heldMesh = mesh;
+}
+
+function muzzleWorld(bundle: VehicleMeshBundle | null): { x: number; y: number; z: number } | null {
+  if (!bundle) return null;
+  const held = bundle.root.userData.heldMesh as THREE.Object3D | undefined;
+  if (!held) return null;
+  const local = (held.userData.muzzleLocal as THREE.Vector3 | undefined) || new THREE.Vector3(0, 0.2, 0.5);
+  const world = local.clone();
+  held.updateWorldMatrix(true, false);
+  held.localToWorld(world);
+  return { x: world.x, y: world.y, z: world.z };
+}
+
+function setVehicleWrecked(bundle: VehicleMeshBundle, wrecked: boolean) {
+  if (bundle.root.userData.wrecked === wrecked) return;
+  bundle.root.userData.wrecked = wrecked;
+  bundle.root.visible = true;
+  bundle.body.rotation.z = wrecked ? 0.42 : 0;
+  bundle.body.position.y = wrecked ? 0.08 : 0;
+  const existing = bundle.root.getObjectByName('wreckSmoke');
+  if (existing) bundle.root.remove(existing);
+  if (!wrecked) return;
+  const smoke = new THREE.Group();
+  smoke.name = 'wreckSmoke';
+  for (let i = 0; i < 5; i++) {
+    const puff = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22 + i * 0.05, 6, 6),
+      new THREE.MeshBasicMaterial({ color: 0x6b7280, transparent: true, opacity: 0.45 })
+    );
+    puff.position.set((Math.random() - 0.5) * 0.4, 1.1 + i * 0.18, (Math.random() - 0.5) * 0.3);
+    smoke.add(puff);
+  }
+  bundle.root.add(smoke);
 }
 
 function animateHeldWeapon(mesh: THREE.Object3D, dt: number) {
@@ -234,6 +282,9 @@ export default function App() {
   const [weaponCooldownMs, setWeaponCooldownMs] = useState(0);
   const [waitingForRound, setWaitingForRound] = useState(false);
   const [isAlive, setIsAlive] = useState(true);
+  const [respawnAt, setRespawnAt] = useState(0);
+  const [spectateName, setSpectateName] = useState<string | null>(null);
+  const [respawnCountdown, setRespawnCountdown] = useState(0);
   const [missileWarning, setMissileWarning] = useState(false);
   const [redHitFlash, setRedHitFlash] = useState(false);
 
@@ -405,6 +456,14 @@ export default function App() {
   const fireWeaponRef = useRef<() => void>(() => undefined);
   const isAimingRef = useRef(false);
   const aimYawRef = useRef(0);
+  const fireHeadingRef = useRef(0);
+  const lastLocalFxRef = useRef(0);
+  const spectateIdRef = useRef<string | null>(null);
+  const lastKillerIdRef = useRef<string | null>(null);
+  const lockTargetIdRef = useRef<string | null>(null);
+  const lockProgressRef = useRef(0);
+  const [lockHud, setLockHud] = useState<{ name: string; progress: number } | null>(null);
+  const lockHudKeyRef = useRef('');
   const empUntilRef = useRef(0);
   const oilUntilRef = useRef(0);
   const speedPenaltyRef = useRef(0);
@@ -422,15 +481,40 @@ export default function App() {
     setWeaponCooldownMs(wCfg.cooldownMs);
 
     const loc = localStateRef.current;
-    const heading = loc.heading + aimYawRef.current;
+    const heading = fireHeadingRef.current || loc.heading + aimYawRef.current;
+    const muzzle = muzzleWorld(localVehicleBundleRef.current);
+    const remaining = Math.max(0, ammoRef.current - 1);
+    ammoRef.current = remaining;
+    setAmmo(remaining);
+
+    arenaManagerRef.current?.spawnDischargedShot(
+      wType,
+      muzzle?.x ?? loc.x,
+      muzzle?.z ?? loc.z,
+      heading,
+      !!muzzle
+    );
+    lastLocalFxRef.current = now;
+    if (wType === 'pistol' || wType === 'rifle' || wType === 'shotgun' || wType === 'machinegun') playMachineGunFX();
+    else if (wType === 'bat' || wType === 'pipe') playCrashFX();
+    else if (wType === 'kangri' || wType === 'firecracker') playFirecrackerFX();
+    else if (wType === 'rocket' || wType === 'homing') playRocketLaunchFX();
+    else if (wType === 'grenade') playGrenadeLaunchFX();
+    else if (wType === 'emp') playEmpShockwaveFX();
+    else if (wType === 'oil' || wType === 'spike') playHazardDropFX(wType);
+
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(
         JSON.stringify({
           type: 'FIRE_WEAPON',
           x: loc.x,
           z: loc.z,
+          mx: muzzle?.x,
+          mz: muzzle?.z,
           heading,
           weapon: wType,
+          clientTime: now,
+          lockTargetId: wType === 'homing' ? lockTargetIdRef.current : undefined,
         })
       );
     }
@@ -445,6 +529,16 @@ export default function App() {
   useEffect(() => {
     isAliveRef.current = isAlive;
   }, [isAlive]);
+  useEffect(() => {
+    if (!respawnAt) {
+      setRespawnCountdown(0);
+      return;
+    }
+    const tick = () => setRespawnCountdown(Math.max(0, Math.ceil((respawnAt - Date.now()) / 1000)));
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [respawnAt]);
   useEffect(() => {
     fireWeaponRef.current = fireWeapon;
   }, [fireWeapon]);
@@ -644,6 +738,18 @@ export default function App() {
       keysRef.current[e.code] = true;
 
       if (!isChatOpen && !isInputFocused) {
+        if (
+          e.code === 'KeyW' ||
+          e.code === 'KeyA' ||
+          e.code === 'KeyS' ||
+          e.code === 'KeyD' ||
+          e.code === 'ArrowUp' ||
+          e.code === 'ArrowDown' ||
+          e.code === 'ArrowLeft' ||
+          e.code === 'ArrowRight'
+        ) {
+          e.preventDefault();
+        }
         if (e.code === 'Space') {
           e.preventDefault();
           const armed = equippedWeaponRef.current;
@@ -899,7 +1005,28 @@ export default function App() {
             setDeaths(localServerPlayer.combat.deaths || 0);
             setDamageDealt(localServerPlayer.combat.damageDealt);
             setIsAlive(localServerPlayer.combat.isAlive);
+            setRespawnAt(localServerPlayer.combat.respawnAt || 0);
             setWaitingForRound(!!localServerPlayer.waitingForRound);
+            if (!localServerPlayer.combat.isAlive) {
+              const killer = lastKillerIdRef.current
+                ? players.find(p => p.id === lastKillerIdRef.current && p.combat?.isAlive !== false)
+                : undefined;
+              if (killer) {
+                spectateIdRef.current = killer.id;
+                setSpectateName(killer.name);
+              } else if (!spectateIdRef.current) {
+                const candidates = players.filter(p => p.id !== playerIdRef.current && p.combat?.isAlive !== false);
+                const pick = candidates[Math.floor(Math.random() * Math.max(1, candidates.length))];
+                if (pick) {
+                  spectateIdRef.current = pick.id;
+                  setSpectateName(pick.name);
+                }
+              }
+            } else {
+              spectateIdRef.current = null;
+              lastKillerIdRef.current = null;
+              setSpectateName(null);
+            }
             if (localServerPlayer.combat.inventory) {
               setWeaponInventory(localServerPlayer.combat.inventory);
             }
@@ -941,11 +1068,20 @@ export default function App() {
               rMesh.root.userData.vehicle = p.vehicle;
               rMesh.root.position.set(p.x, 0.04, p.z);
               rMesh.root.rotation.y = p.heading;
+              rMesh.root.frustumCulled = false;
+              rMesh.body.frustumCulled = false;
+              rMesh.root.visible = true;
+              rMesh.root.scale.set(1, 1, 1);
               const tag = makeNametagSprite(p.name, !!p.isNpc);
               rMesh.root.add(tag);
               nametagSpritesRef.current.set(p.id, tag);
               remoteVehicleBundlesRef.current.set(p.id, rMesh);
               scene.add(rMesh.root);
+            } else if (p.isNpc && p.mode === 'free_roam') {
+              const live = remoteVehicleBundlesRef.current.get(p.id)!;
+              live.root.visible = true;
+              live.root.position.set(p.x, 0.04, p.z);
+              live.root.rotation.y = p.heading;
             }
           }
 
@@ -1007,20 +1143,50 @@ export default function App() {
               ? localVehicleBundleRef.current
               : remoteVehicleBundlesRef.current.get(msg.ownerId);
           const fx = arenaManagerRef.current;
-          if (fired === 'pistol' || fired === 'rifle' || fired === 'shotgun' || fired === 'machinegun') {
+          const isLocal = msg.ownerId === playerIdRef.current;
+          if (isLocal && Date.now() - lastLocalFxRef.current < 120) {
+            const held = ownerBundle?.root.userData.heldMesh as THREE.Object3D | undefined;
+            if (held) held.userData.kick = 0.18;
+          } else if (fired === 'pistol' || fired === 'rifle' || fired === 'shotgun' || fired === 'machinegun') {
             playMachineGunFX();
-            fx?.triggerMuzzleFlash(msg.x, msg.z, msg.heading, fired);
+            fx?.spawnDischargedShot(
+              fired,
+              Number.isFinite(Number(msg.mx)) ? Number(msg.mx) : msg.x,
+              Number.isFinite(Number(msg.mz)) ? Number(msg.mz) : msg.z,
+              msg.heading,
+              Number.isFinite(Number(msg.mx))
+            );
             const held = ownerBundle?.root.userData.heldMesh as THREE.Object3D | undefined;
             if (held) held.userData.kick = 0.18;
           } else if (fired === 'bat' || fired === 'pipe') {
             playCrashFX();
-            fx?.triggerMeleeArc(msg.x, msg.z, msg.heading, fired);
+            fx?.spawnDischargedShot(
+              fired,
+              Number.isFinite(Number(msg.mx)) ? Number(msg.mx) : msg.x,
+              Number.isFinite(Number(msg.mz)) ? Number(msg.mz) : msg.z,
+              msg.heading,
+              Number.isFinite(Number(msg.mx))
+            );
             const held = ownerBundle?.root.userData.heldMesh as THREE.Object3D | undefined;
             if (held) held.userData.swing = 0.01;
           } else if (fired === 'kangri') {
             playFirecrackerFX();
-            fx?.triggerKangriBurstFX(msg.x, msg.z);
-          } else if (msg.ownerId === playerIdRef.current) {
+            fx?.spawnDischargedShot(
+              fired,
+              Number.isFinite(Number(msg.mx)) ? Number(msg.mx) : msg.x,
+              Number.isFinite(Number(msg.mz)) ? Number(msg.mz) : msg.z,
+              msg.heading,
+              Number.isFinite(Number(msg.mx))
+            );
+          } else if (!isLocal) {
+            fx?.spawnDischargedShot(
+              fired,
+              Number.isFinite(Number(msg.mx)) ? Number(msg.mx) : msg.x,
+              Number.isFinite(Number(msg.mz)) ? Number(msg.mz) : msg.z,
+              msg.heading,
+              Number.isFinite(Number(msg.mx))
+            );
+          } else if (isLocal) {
             switch (fired) {
               case 'rocket':
               case 'homing':
@@ -1063,7 +1229,7 @@ export default function App() {
             arenaManagerRef.current?.triggerEmpShockwaveFX(msg.x, msg.z, msg.radius || 14.0);
           } else if (msg.effect === 'kangri_burst') {
             playFirecrackerFX();
-            arenaManagerRef.current?.triggerKangriBurstFX(msg.x, msg.z);
+            arenaManagerRef.current?.triggerKangriBurstFX(msg.x, msg.z, msg.heading || 0);
           }
         } else if (msg.type === 'PLAYER_ELIMINATED') {
           playEliminationHorn();
@@ -1077,10 +1243,30 @@ export default function App() {
 
           if (msg.victimId === playerIdRef.current) {
             setIsAlive(false);
+            setRespawnAt(Date.now() + 30000);
+            lastKillerIdRef.current = msg.attackerId || null;
+            spectateIdRef.current = msg.attackerId || null;
+            setSpectateName(msg.attackerName || 'killer');
             setServerAnnouncement('YOU WERE ELIMINATED');
-            showToast('💀 You were ELIMINATED! Spectating remaining combatants...');
+            showToast('You were eliminated. Spectating your killer...');
           } else if (msg.attackerId === playerIdRef.current) {
             showToast(`🎯 ELIMINATION CONFIRMED: ${msg.victimName}!`);
+          }
+        } else if (msg.type === 'PLAYER_RESPAWN') {
+          if (msg.playerId === playerIdRef.current) {
+            setIsAlive(true);
+            setRespawnAt(0);
+            spectateIdRef.current = null;
+            setSpectateName(null);
+            if (typeof msg.x === 'number' && typeof msg.z === 'number') {
+              localStateRef.current.x = msg.x;
+              localStateRef.current.z = msg.z;
+              localStateRef.current.heading = msg.heading || 0;
+              localStateRef.current.speed = 0;
+            }
+            setPlayerHealth(100);
+            setPlayerVehicleHealth(100);
+            showToast('RESPAWNED');
           }
         } else if (msg.type === 'MATCH_ANNOUNCEMENT' || msg.type === 'MATCH_STATE_CHANGE' || msg.type === 'MATCH_STARTED' || msg.type === 'MATCH_INTERMISSION' || msg.type === 'WINNER_CELEBRATION') {
           if (msg.matchState) setMatchState(msg.matchState);
@@ -1138,12 +1324,12 @@ export default function App() {
       const vCfg = VEHICLE_CONFIGS[loc.vehicle] || VEHICLE_CONFIGS.auto;
 
       // Local Vehicle Input & Prediction
-      if (hasStarted) {
+      if (hasStarted && isAliveRef.current) {
         let accel = 0;
         if (up) accel += vCfg.acceleration;
-        if (dn) {
-          if (loc.speed > 0.5) accel -= vCfg.brakeForce;
-          else accel -= vCfg.acceleration * 0.7; // reverse
+        if (dn && !up) {
+          if (loc.speed > 1.4) accel -= vCfg.brakeForce;
+          else accel -= vCfg.acceleration * 1.15;
         }
         const nowMs = Date.now();
         if (nowMs < empUntilRef.current) {
@@ -1186,26 +1372,30 @@ export default function App() {
             setClashNotification(null);
           }, 3500);
         };
+        const bumpSpeed = (factor: number) => {
+          if (loc.speed < -0.15) loc.speed *= 0.55;
+          else loc.speed = -loc.speed * factor;
+        };
 
         // Mode-Specific Boundaries
         if (gameModeRef.current === 'battle_arena') {
           if (loc.x <= ARENA_BOUNDS.MIN_X) {
             loc.x = ARENA_BOUNDS.MIN_X;
             reportClash('West Arena Grandstand Wall');
-            loc.speed = -loc.speed * 0.35;
+            bumpSpeed(0.35);
           } else if (loc.x >= ARENA_BOUNDS.MAX_X) {
             loc.x = ARENA_BOUNDS.MAX_X;
             reportClash('East Arena Lake Barrier');
-            loc.speed = -loc.speed * 0.35;
+            bumpSpeed(0.35);
           }
           if (loc.z <= ROAD_BOUNDS.MIN_Z && loc.x >= -24 && loc.x <= 18) {
             loc.z = ROAD_BOUNDS.MIN_Z;
             reportClash('JK Police Dalgate Barricade');
-            loc.speed = -loc.speed * 0.4;
+            bumpSpeed(0.4);
           } else if (loc.z >= ROAD_BOUNDS.MAX_Z && loc.x >= -24 && loc.x <= 18) {
             loc.z = ROAD_BOUNDS.MAX_Z;
             reportClash('JK Police Burger Barn Checkpoint');
-            loc.speed = -loc.speed * 0.45;
+            bumpSpeed(0.45);
           }
         } else {
           // Free roam Boulevard boundaries
@@ -1237,25 +1427,25 @@ export default function App() {
           if (hitWestWall) {
             loc.x = clampX;
             reportClash(obstacleLabel);
-            loc.speed = -loc.speed * 0.35;
+            bumpSpeed(0.35);
           }
 
           if (loc.x >= 17.2) {
             loc.x = 17.2;
             reportClash('Dal Lake Promenade Railing Wall');
-            loc.speed = -loc.speed * 0.35;
+            bumpSpeed(0.35);
           }
 
           if (loc.z <= ROAD_BOUNDS.MIN_Z && loc.x >= -24 && loc.x <= 18) {
             loc.z = ROAD_BOUNDS.MIN_Z;
             reportClash('JK Police Dalgate Barricade');
-            loc.speed = -loc.speed * 0.4;
+            bumpSpeed(0.4);
           }
 
           if (loc.z >= ROAD_BOUNDS.MAX_Z && loc.x >= -24 && loc.x <= 18) {
             loc.z = ROAD_BOUNDS.MAX_Z;
             reportClash('JK Police Burger Barn Checkpoint');
-            loc.speed = -loc.speed * 0.45;
+            bumpSpeed(0.45);
           }
 
           // JK Police sentry booths at both road endings
@@ -1283,6 +1473,9 @@ export default function App() {
           if (!bundle || !bundle.root.visible) continue;
           const ox = bundle.root.position.x;
           const oz = bundle.root.position.z;
+          if (!Number.isFinite(ox) || !Number.isFinite(oz)) continue;
+          if (Math.hypot(ox, oz) < 1.5 && Math.hypot(target.x, target.z) > 8) continue;
+          if (Math.hypot(ox - target.x, oz - target.z) > 14) continue;
           const dx = loc.x - ox;
           const dz = loc.z - oz;
           const dist = Math.hypot(dx, dz);
@@ -1292,7 +1485,7 @@ export default function App() {
             const pushDir = Math.atan2(dx, dz);
             loc.x += Math.sin(pushDir) * (collisionRadius - dist) * 0.7;
             loc.z += Math.cos(pushDir) * (collisionRadius - dist) * 0.7;
-            loc.speed = -loc.speed * 0.35;
+            bumpSpeed(0.35);
           }
         }
 
@@ -1321,6 +1514,8 @@ export default function App() {
             bundle.lightBar.children[1].visible = strobe;
             bundle.lightBar.children[2].visible = !strobe;
           }
+          bundle.root.visible = true;
+          setVehicleWrecked(bundle, false);
           ensureHeldWeapon(bundle, equippedWeaponRef.current);
           const held = bundle.root.userData.heldMesh as THREE.Object3D | undefined;
           if (!isAimingRef.current) {
@@ -1351,15 +1546,49 @@ export default function App() {
             ws.send(JSON.stringify({ type: 'INPUT', input: pkt }));
           }
         }
+      } else if (localVehicleBundleRef.current) {
+        setVehicleWrecked(localVehicleBundleRef.current, true);
+        netSendAccum += dt;
+        if (netSendAccum >= 0.05) {
+          netSendAccum = 0;
+          if (ws.readyState === WebSocket.OPEN) {
+            inputSeqRef.current++;
+            ws.send(
+              JSON.stringify({
+                type: 'INPUT',
+                input: {
+                  seq: inputSeqRef.current,
+                  steer: 0,
+                  throttle: 0,
+                  brake: 0,
+                  handbrake: false,
+                  fire: false,
+                  vehicleType: loc.vehicle,
+                  clientTime: Date.now(),
+                },
+              })
+            );
+          }
+        }
       }
 
       // Smooth Entity Interpolation for Remote Players
       for (const [rId, target] of remoteTargetsRef.current.entries()) {
         const bundle = remoteVehicleBundlesRef.current.get(rId);
         if (bundle) {
-          bundle.root.position.x += (target.x - bundle.root.position.x) * Math.min(1, 14 * dt);
-          bundle.root.position.z += (target.z - bundle.root.position.z) * Math.min(1, 14 * dt);
-          bundle.root.rotation.y += (target.heading - bundle.root.rotation.y) * Math.min(1, 14 * dt);
+          const drift = Math.hypot(target.x - bundle.root.position.x, target.z - bundle.root.position.z);
+          if (drift > 16 || !Number.isFinite(bundle.root.position.x)) {
+            bundle.root.position.set(target.x, 0.04, target.z);
+            bundle.root.rotation.y = target.heading;
+          } else {
+            bundle.root.position.x += (target.x - bundle.root.position.x) * Math.min(1, 14 * dt);
+            bundle.root.position.z += (target.z - bundle.root.position.z) * Math.min(1, 14 * dt);
+            let rotDiff = target.heading - bundle.root.rotation.y;
+            while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+            while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+            bundle.root.rotation.y += rotDiff * Math.min(1, 14 * dt);
+          }
+          bundle.root.position.y = 0.04;
           if (bundle.frontSteerGroup) {
             bundle.frontSteerGroup.rotation.y = target.steer * 0.45;
           }
@@ -1373,10 +1602,26 @@ export default function App() {
             target.mode === 'battle_arena' &&
             !!target.isNpc &&
             !matchLive;
-          bundle.root.visible = target.isAlive !== false && !hideArenaIdle;
-          ensureHeldWeapon(bundle, target.weapon || null);
+          const isStreetNpc = !!target.isNpc && target.mode !== 'battle_arena';
+          bundle.root.visible = isStreetNpc || !hideArenaIdle;
+          if (isStreetNpc) {
+            bundle.root.visible = true;
+            bundle.root.frustumCulled = false;
+            setVehicleWrecked(bundle, false);
+          } else {
+            setVehicleWrecked(bundle, target.isAlive === false);
+          }
+          ensureHeldWeapon(bundle, target.isAlive === false ? null : target.weapon || null);
           const held = bundle.root.userData.heldMesh as THREE.Object3D | undefined;
           if (held) animateHeldWeapon(held, dt);
+          const smoke = bundle.root.getObjectByName('wreckSmoke');
+          if (smoke) {
+            smoke.children.forEach((puff, i) => {
+              puff.position.y = 1.1 + i * 0.18 + Math.sin(clock * 3 + i) * 0.12;
+              const mat = (puff as THREE.Mesh).material as THREE.MeshBasicMaterial;
+              if (mat) mat.opacity = 0.28 + Math.sin(clock * 2 + i) * 0.12;
+            });
+          }
         }
       }
 
@@ -1388,6 +1633,43 @@ export default function App() {
           serverProjectilesRef.current,
           serverHazardsRef.current
         );
+      }
+
+      if (isAliveRef.current && equippedWeaponRef.current === 'homing') {
+        const fx = Math.sin(fireHeadingRef.current);
+        const fz = Math.cos(fireHeadingRef.current);
+        let bestId: string | null = null;
+        let bestName = '';
+        let best = 80;
+        for (const [id, t] of remoteTargetsRef.current.entries()) {
+          if (t.isAlive === false) continue;
+          const dx = t.x - loc.x;
+          const dz = t.z - loc.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist < 4 || dist > 80) continue;
+          const dot = (dx * fx + dz * fz) / dist;
+          if (dot > 0.72 && dist < best) {
+            best = dist;
+            bestId = id;
+            bestName = t.name;
+          }
+        }
+        if (bestId === lockTargetIdRef.current) lockProgressRef.current += dt;
+        else {
+          lockTargetIdRef.current = bestId;
+          lockProgressRef.current = 0;
+        }
+        const p = bestId ? Math.min(1, lockProgressRef.current / 0.75) : 0;
+        const key = bestId ? `${bestId}:${Math.floor(p * 8)}` : '';
+        if (key !== lockHudKeyRef.current) {
+          lockHudKeyRef.current = key;
+          setLockHud(bestId ? { name: bestName, progress: p } : null);
+        }
+      } else if (lockHudKeyRef.current) {
+        lockTargetIdRef.current = null;
+        lockProgressRef.current = 0;
+        lockHudKeyRef.current = '';
+        setLockHud(null);
       }
 
       const pickupMeshes = worldPickupMeshesRef.current;
@@ -1462,7 +1744,6 @@ export default function App() {
       if (cameraRef.current) {
         const cam = cameraRef.current;
         const speedRatio = Math.min(1.0, Math.abs(loc.speed) / 55.6); // 0 to 1 at 200 km/h
-        const isReversing = loc.speed < -0.8;
 
         // Vehicle-calibrated camera profile
         const profile = VEHICLE_CAMERA_PROFILES[loc.vehicle] || VEHICLE_CAMERA_PROFILES.auto;
@@ -1470,37 +1751,65 @@ export default function App() {
         // 1. Maintain consistent vehicle screen size across 0 to 200 km/h:
         // Do NOT continuously increase camera distance based on vehicle speed.
         // Screen size remains consistent at all speeds.
-        const targetDist = profile.dist;
-        const targetHeight = profile.height;
+        const ads = isAimingRef.current && isAliveRef.current;
+        const targetDist = profile.dist * (ads ? 0.58 : 1);
+        const targetHeight = profile.height + (ads ? 0.38 : 0.18);
 
         // 2. Critical-damped rotational follow (heading only):
         // Damping the camera heading rather than Cartesian XYZ position eliminates
         // velocity lag distance completely while preserving smooth turning arcs.
-        const aimHeading = loc.heading + aimYawRef.current;
-        let diff = (isAimingRef.current ? aimHeading : loc.heading) - camHeadingRef.current;
+        let followX = loc.x;
+        let followZ = loc.z;
+        let followHeading = loc.heading + aimYawRef.current;
+        let followSpeed = loc.speed;
+        if (!isAliveRef.current) {
+          let sid = spectateIdRef.current;
+          let tgt = sid ? remoteTargetsRef.current.get(sid) : undefined;
+          if (!tgt || tgt.isAlive === false) {
+            const killerId = lastKillerIdRef.current;
+            const killer = killerId ? remoteTargetsRef.current.get(killerId) : undefined;
+            if (killer && killer.isAlive !== false) {
+              spectateIdRef.current = killerId;
+              tgt = killer;
+            } else {
+              const alive = [...remoteTargetsRef.current.entries()].filter(([, t]) => t.isAlive !== false);
+              const pick = alive[Math.floor(Math.random() * Math.max(1, alive.length))];
+              if (pick) {
+                spectateIdRef.current = pick[0];
+                tgt = pick[1];
+              } else {
+                tgt = undefined;
+              }
+            }
+          }
+          if (tgt) {
+            const b = remoteVehicleBundlesRef.current.get(spectateIdRef.current || '');
+            followX = b ? b.root.position.x : tgt.x;
+            followZ = b ? b.root.position.z : tgt.z;
+            followHeading = tgt.heading;
+            followSpeed = tgt.speed || 0;
+          }
+        }
+
+        let diff = followHeading - camHeadingRef.current;
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
 
-        const headingTrackingSpeed = Math.abs(loc.speed) > 1.0 ? 8.5 : 5.0;
+        const headingTrackingSpeed = Math.abs(followSpeed) > 1.0 ? 8.5 : 5.0;
         camHeadingRef.current += diff * (1 - Math.exp(-headingTrackingSpeed * dt));
 
         const camFx = Math.sin(camHeadingRef.current);
         const camFz = Math.cos(camHeadingRef.current);
 
-        // 3. Subtle speed-aware look-ahead along vehicle trajectory:
-        // Forward driving extends look-ahead down the road so oncoming turns and scenery are visible.
-        // Angles view slightly forward, placing the vehicle stably in the lower-middle portion of the screen.
-        const lookDir = isReversing ? -0.8 : 1.0;
-        const lookAheadDist = profile.lookAheadBase + speedRatio * profile.lookAheadSpeed;
-        const vehFx = Math.sin(loc.heading);
-        const vehFz = Math.cos(loc.heading);
+        // Look along the camera heading so screen-center is the firing aim.
+        const lookDir = 1.0;
+        const lookAheadDist =
+          profile.lookAheadBase + speedRatio * profile.lookAheadSpeed + (ads ? 8.8 : 6.4);
+        const lookTargetX = followX + camFx * lookAheadDist * lookDir;
+        const lookTargetZ = followZ + camFz * lookAheadDist * lookDir;
+        const lookTargetY = (ads ? 1.95 : 1.72) + profile.lookHeight * 0.2;
 
-        const lookTargetX = loc.x + vehFx * lookAheadDist * lookDir;
-        const lookTargetZ = loc.z + vehFz * lookAheadDist * lookDir;
-        const lookTargetY = profile.lookHeight + 0.25;
-
-        // 4. Subtle FOV adjustment (minimal change: 60 deg to max 63.5 deg to avoid shrinking vehicle)
-        const targetFov = profile.baseFov + speedRatio * profile.maxFovBoost;
+        const targetFov = ads ? 41 : profile.baseFov + speedRatio * profile.maxFovBoost;
         cam.fov += (targetFov - cam.fov) * Math.min(1, 8.0 * dt);
         cam.updateProjectionMatrix();
 
@@ -1519,11 +1828,12 @@ export default function App() {
         // Position camera strictly relative to car:
         // Because camFx and camFz are unit circle coordinates from camHeadingRef,
         // horizontal distance is ALWAYS exactly targetDist, guaranteeing zero speed lag!
-        cam.position.x = loc.x - camFx * targetDist + sShakeX + cShakeX;
+        cam.position.x = followX - camFx * targetDist + sShakeX + cShakeX;
         cam.position.y = targetHeight + 0.15 + sShakeY + cShakeY;
-        cam.position.z = loc.z - camFz * targetDist + cShakeZ;
+        cam.position.z = followZ - camFz * targetDist + cShakeZ;
 
         cam.lookAt(lookTargetX, lookTargetY, lookTargetZ);
+        fireHeadingRef.current = Math.atan2(lookTargetX - cam.position.x, lookTargetZ - cam.position.z);
       }
 
       // Animated Water & Houseboats
@@ -2026,14 +2336,40 @@ export default function App() {
             </div>
           )}
 
-          {isAiming && (
+          {isAlive && (
             <div className="absolute inset-0 z-20 pointer-events-none flex items-center justify-center">
               <div className="relative w-10 h-10">
-                <div className="absolute left-1/2 top-0 w-[2px] h-3 -translate-x-1/2 bg-amber-300" />
-                <div className="absolute left-1/2 bottom-0 w-[2px] h-3 -translate-x-1/2 bg-amber-300" />
-                <div className="absolute top-1/2 left-0 h-[2px] w-3 -translate-y-1/2 bg-amber-300" />
-                <div className="absolute top-1/2 right-0 h-[2px] w-3 -translate-y-1/2 bg-amber-300" />
-                <div className="absolute left-1/2 top-1/2 w-1.5 h-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-200" />
+                <div className="absolute left-1/2 top-0 w-[2px] h-3.5 -translate-x-1/2 bg-amber-300/90" />
+                <div className="absolute left-1/2 bottom-0 w-[2px] h-3.5 -translate-x-1/2 bg-amber-300/90" />
+                <div className="absolute top-1/2 left-0 h-[2px] w-3.5 -translate-y-1/2 bg-amber-300/90" />
+                <div className="absolute top-1/2 right-0 h-[2px] w-3.5 -translate-y-1/2 bg-amber-300/90" />
+                <div className="absolute left-1/2 top-1/2 w-1 h-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-100" />
+              </div>
+              {isAiming && (
+                <div className="absolute mt-14 text-[10px] font-bold tracking-widest text-amber-200/80">ADS</div>
+              )}
+              {lockHud && (
+                <div
+                  className={`absolute mt-20 px-2 py-1 rounded border text-[10px] font-black tracking-wider ${
+                    lockHud.progress >= 1
+                      ? 'border-red-400 text-red-300 bg-red-950/70'
+                      : 'border-cyan-400 text-cyan-200 bg-slate-950/70'
+                  }`}
+                >
+                  {lockHud.progress >= 1 ? `LOCK ${lockHud.name}` : `ACQUIRING ${Math.round(lockHud.progress * 100)}%`}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!isAlive && (
+            <div className="absolute inset-0 z-40 pointer-events-none flex flex-col items-center justify-center bg-slate-950/55">
+              <div className="text-rose-400 font-black text-3xl tracking-wider font-['Outfit']">ELIMINATED</div>
+              <div className="text-white text-lg mt-2 font-bold">
+                Respawn in {Math.max(0, respawnCountdown)}s
+              </div>
+              <div className="text-slate-300 text-sm mt-1">
+                Spectating {spectateName || 'another driver'} — you cannot drive or fire
               </div>
             </div>
           )}
@@ -2064,21 +2400,19 @@ export default function App() {
 
           {gameMode === 'free_roam' && (
             <div className="absolute bottom-28 right-4 z-20 min-w-[210px] p-3 bg-slate-950/90 border border-slate-700/80 rounded-2xl shadow-2xl backdrop-blur-md pointer-events-none">
-              <div className="flex items-center justify-between text-xs font-bold font-['Outfit']">
-                <span className="text-red-400">DRIVER HP {playerHealth}</span>
-                <span className="text-amber-300">VEHICLE {playerVehicleHealth}</span>
+              <div className="flex items-center justify-between text-[10px] font-bold font-['Outfit'] text-red-400">
+                <span>DRIVER</span>
+                <span className="font-mono text-white">{playerHealth}</span>
               </div>
-              <div className="h-3 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-700 mt-1">
-                <div
-                  className={`h-full transition-all duration-200 ${
-                    playerVehicleHealth > 50
-                      ? 'bg-gradient-to-r from-emerald-500 to-green-400'
-                      : playerVehicleHealth > 25
-                      ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
-                      : 'bg-gradient-to-r from-red-600 to-rose-500 animate-pulse'
-                  }`}
-                  style={{ width: `${Math.max(0, playerVehicleHealth)}%` }}
-                />
+              <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-700 mt-0.5">
+                <div className="h-full bg-rose-500" style={{ width: `${Math.max(0, playerHealth)}%` }} />
+              </div>
+              <div className="flex items-center justify-between text-[10px] font-bold font-['Outfit'] text-amber-300 mt-1.5">
+                <span>VEHICLE</span>
+                <span className="font-mono text-white">{playerVehicleHealth}</span>
+              </div>
+              <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-700 mt-0.5">
+                <div className="h-full bg-amber-400" style={{ width: `${Math.max(0, playerVehicleHealth)}%` }} />
               </div>
             </div>
           )}
@@ -2105,6 +2439,13 @@ export default function App() {
                     }`}
                     style={{ width: `${Math.max(0, playerHealth)}%` }}
                   />
+                </div>
+                <div className="flex items-center justify-between text-[10px] font-bold text-amber-300 pt-1">
+                  <span>VEHICLE</span>
+                  <span className="font-mono text-white">{playerVehicleHealth}</span>
+                </div>
+                <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-700">
+                  <div className="h-full bg-amber-400" style={{ width: `${Math.max(0, playerVehicleHealth)}%` }} />
                 </div>
               </div>
 

@@ -26,7 +26,7 @@ export const VEHICLE_CONFIGS: Record<VehicleCategory, VehiclePhysicsConfig> = {
     mass: 420,
     maxSpeed: 41.7, // ~150 km/h hyper e-rickshaw
     acceleration: 14.5,
-    reverseSpeed: 10.0,
+    reverseSpeed: 18.0,
     brakeForce: 24.0,
     turnSpeed: 2.8,
     wheelBase: 1.8,
@@ -43,7 +43,7 @@ export const VEHICLE_CONFIGS: Record<VehicleCategory, VehiclePhysicsConfig> = {
     mass: 1280,
     maxSpeed: 52.8, // ~190 km/h
     acceleration: 16.8,
-    reverseSpeed: 12.0,
+    reverseSpeed: 20.0,
     brakeForce: 26.0,
     turnSpeed: 2.2,
     wheelBase: 2.5,
@@ -60,7 +60,7 @@ export const VEHICLE_CONFIGS: Record<VehicleCategory, VehiclePhysicsConfig> = {
     mass: 1550,
     maxSpeed: 55.6, // 200.16 km/h (exact 200 km/h top speed!)
     acceleration: 22.5,
-    reverseSpeed: 16.0,
+    reverseSpeed: 22.0,
     brakeForce: 32.0,
     turnSpeed: 2.5,
     wheelBase: 2.7,
@@ -77,7 +77,7 @@ export const VEHICLE_CONFIGS: Record<VehicleCategory, VehiclePhysicsConfig> = {
     mass: 195,
     maxSpeed: 55.6, // 200.16 km/h (exact 200 km/h top speed!)
     acceleration: 25.0,
-    reverseSpeed: 8.0,
+    reverseSpeed: 16.0,
     brakeForce: 30.0,
     turnSpeed: 3.2,
     wheelBase: 1.4,
@@ -100,6 +100,7 @@ export const ROAD_BOUNDS = {
 };
 
 export const PICKUP_RESPAWN_SEC = 60;
+export const PLAYER_RESPAWN_SEC = 30;
 export const MATCH_DURATION_SEC = 600;
 export const MATCH_COUNTDOWN_SEC = 10;
 export const MATCH_CELEBRATION_SEC = 12;
@@ -156,11 +157,10 @@ export type WeaponType =
   | 'rifle'
   | 'kangri';
 
-export type StreetWeaponType = 'bat' | 'pipe' | 'pistol' | 'shotgun' | 'rifle' | 'kangri';
+export type StreetWeaponType = 'bat' | 'pistol' | 'shotgun' | 'rifle' | 'kangri';
 
 export const STREET_WEAPON_ORDER: StreetWeaponType[] = [
   'bat',
-  'pipe',
   'pistol',
   'shotgun',
   'rifle',
@@ -343,7 +343,7 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponDefinition> = {
     projectileSpeed: 0,
     cooldownMs: 480,
     ammo: 28,
-    dropProbability: 22,
+    dropProbability: 28,
     kind: 'melee',
     range: 3.4,
   },
@@ -359,7 +359,7 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponDefinition> = {
     projectileSpeed: 0,
     cooldownMs: 720,
     ammo: 18,
-    dropProbability: 18,
+    dropProbability: 0,
     kind: 'melee',
     range: 3.8,
   },
@@ -375,7 +375,7 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponDefinition> = {
     projectileSpeed: 78,
     cooldownMs: 280,
     ammo: 14,
-    dropProbability: 18,
+    dropProbability: 22,
     kind: 'projectile',
     range: 28,
   },
@@ -425,7 +425,7 @@ export const WEAPON_CONFIGS: Record<WeaponType, WeaponDefinition> = {
     ammo: 8,
     dropProbability: 14,
     kind: 'special',
-    range: 5.2,
+    range: 14.5,
   },
 };
 
@@ -535,6 +535,7 @@ export interface PlayerCombatState {
   damageDealt: number;
   isAlive: boolean;
   invulnerableUntil: number; // epoch ms
+  respawnAt: number; // epoch ms; 0 = not waiting
   empUntil: number; // epoch ms
   oilUntil: number; // epoch ms
   speedPenaltyUntil: number; // epoch ms

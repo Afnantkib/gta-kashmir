@@ -23,11 +23,12 @@ export interface ArenaManager {
   ) => void;
   triggerExplosionFX: (x: number, z: number, weaponType: WeaponType, radius?: number) => void;
   triggerEmpShockwaveFX: (x: number, z: number, radius: number) => void;
-  triggerKangriBurstFX: (x: number, z: number) => void;
+  triggerKangriBurstFX: (x: number, z: number, heading?: number) => void;
   triggerMuzzleFlash: (x: number, z: number, heading: number, weaponType: WeaponType) => void;
   triggerMeleeArc: (x: number, z: number, heading: number, weaponType: WeaponType) => void;
   triggerImpactSparks: (x: number, z: number) => void;
   triggerDamageNumberFX: (event: DamageEvent) => void;
+  spawnDischargedShot: (weaponType: WeaponType, x: number, z: number, heading: number, fromMuzzle?: boolean) => void;
   dispose: () => void;
 }
 
@@ -479,7 +480,37 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
     });
   }
 
-  function triggerKangriBurstFX(x: number, z: number) {
+  function triggerKangriBurstFX(x: number, z: number, heading = 0) {
+    const fx = Math.sin(heading);
+    const fz = Math.cos(heading);
+    [-0.16, -0.08, 0, 0.08, 0.16].forEach(ang => {
+      spawnFlyingBolt(x, z, heading + ang, 26, 0.55, ang === 0 ? 0xff6a1a : 0xfacc15, 0.09, 0.85);
+    });
+    const coneGroup = new THREE.Group();
+    coneGroup.position.set(x + fx * 4.8, 0.95, z + fz * 4.8);
+    coneGroup.rotation.y = heading;
+    const cone = new THREE.Mesh(
+      new THREE.ConeGeometry(2.1, 9.5, 10, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xfb923c, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+    );
+    cone.rotation.x = Math.PI / 2;
+    coneGroup.add(cone);
+    scene.add(coneGroup);
+    let coneAge = 0;
+    activeEffects.push({
+      group: coneGroup,
+      update: dt => {
+        coneAge += dt;
+        const mat = cone.material as THREE.MeshBasicMaterial;
+        mat.opacity = Math.max(0, 0.38 * (1 - coneAge / 0.35));
+        coneGroup.scale.setScalar(1 + coneAge * 1.4);
+        if (coneAge >= 0.35) {
+          scene.remove(coneGroup);
+          return true;
+        }
+        return false;
+      },
+    });
     const g = new THREE.Group();
     g.position.set(x, 0.55, z);
     scene.add(g);
@@ -591,6 +622,108 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
         return false;
       },
     });
+  }
+
+  function spawnFlyingBolt(
+    x: number,
+    z: number,
+    heading: number,
+    speed: number,
+    life: number,
+    color: number,
+    radius: number,
+    length: number
+  ) {
+    const g = new THREE.Group();
+    const fx = Math.sin(heading);
+    const fz = Math.cos(heading);
+    g.position.set(x, 0.95, z);
+    g.rotation.y = heading;
+    scene.add(g);
+    const bolt = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius * 0.55, length, 6).rotateX(Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color })
+    );
+    g.add(bolt);
+    const glow = new THREE.Mesh(
+      new THREE.SphereGeometry(radius * 1.8, 6, 6),
+      new THREE.MeshBasicMaterial({ color: 0xfff7ed, transparent: true, opacity: 0.9 })
+    );
+    glow.position.z = length * 0.35;
+    g.add(glow);
+    let age = 0;
+    activeEffects.push({
+      group: g,
+      update: dt => {
+        age += dt;
+        g.position.x += fx * speed * dt;
+        g.position.z += fz * speed * dt;
+        if (age >= life) {
+          scene.remove(g);
+          return true;
+        }
+        return false;
+      },
+    });
+  }
+
+  function spawnDischargedShot(weaponType: WeaponType, x: number, z: number, heading: number, fromMuzzle = false) {
+    const fx = Math.sin(heading);
+    const fz = Math.cos(heading);
+    const muzzleX = fromMuzzle ? x : x + fx * 2.4;
+    const muzzleZ = fromMuzzle ? z : z + fz * 2.4;
+
+    switch (weaponType) {
+      case 'pistol':
+        triggerMuzzleFlash(muzzleX, muzzleZ, heading, weaponType);
+        spawnFlyingBolt(muzzleX, muzzleZ, heading, 88, 0.45, 0xfacc15, 0.06, 1.1);
+        break;
+      case 'rifle':
+        triggerMuzzleFlash(muzzleX, muzzleZ, heading, weaponType);
+        spawnFlyingBolt(muzzleX, muzzleZ, heading, 120, 0.7, 0xfde68a, 0.07, 1.6);
+        break;
+      case 'machinegun':
+        triggerMuzzleFlash(muzzleX, muzzleZ, heading, weaponType);
+        spawnFlyingBolt(muzzleX, muzzleZ, heading, 100, 0.55, 0xfde047, 0.055, 1.2);
+        break;
+      case 'shotgun':
+        triggerMuzzleFlash(muzzleX, muzzleZ, heading, weaponType);
+        [-0.22, -0.11, 0, 0.11, 0.22].forEach(ang => {
+          spawnFlyingBolt(muzzleX, muzzleZ, heading + ang, 70, 0.38, 0xfb923c, 0.08, 0.7);
+        });
+        break;
+      case 'bat':
+      case 'pipe':
+        triggerMeleeArc(x, z, heading, weaponType);
+        break;
+      case 'kangri':
+        triggerKangriBurstFX(muzzleX, muzzleZ, heading);
+        break;
+      case 'rocket':
+      case 'homing':
+        spawnFlyingBolt(muzzleX, muzzleZ, heading, 48, 1.6, 0xef4444, 0.14, 1.5);
+        triggerMuzzleFlash(muzzleX, muzzleZ, heading, 'rifle');
+        break;
+      case 'grenade':
+        spawnFlyingBolt(muzzleX, muzzleZ, heading, 30, 1.2, 0x65a30d, 0.16, 0.5);
+        break;
+      case 'firecracker':
+        [-0.3, -0.15, 0, 0.15, 0.3].forEach(ang => {
+          spawnFlyingBolt(muzzleX, muzzleZ, heading + ang, 42, 1.1, 0xec4899, 0.09, 0.9);
+        });
+        break;
+      case 'emp':
+        triggerEmpShockwaveFX(x, z, 14);
+        break;
+      case 'oil':
+      case 'spike':
+        triggerImpactSparks(x - fx * 2.2, z - fz * 2.2);
+        break;
+      default:
+        triggerMuzzleFlash(muzzleX, muzzleZ, heading, 'pistol');
+        spawnFlyingBolt(muzzleX, muzzleZ, heading, 80, 0.4, 0xf8fafc, 0.05, 0.9);
+        break;
+    }
   }
 
   function triggerImpactSparks(x: number, z: number) {
@@ -806,6 +939,7 @@ export function buildBattleArena(scene: THREE.Scene): ArenaManager {
     triggerMeleeArc,
     triggerImpactSparks,
     triggerDamageNumberFX,
+    spawnDischargedShot,
     dispose,
   };
 }
